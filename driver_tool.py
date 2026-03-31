@@ -222,7 +222,10 @@ class DriverCleanerApp(tk.Tk):
             # Utolsó lépés: kényszerítsük a Windowst, hogy a beépített "generic" driverekkel (pl. generikus i2c/ps2 touchpad) rögtön pótolja a hiányt!
             self.after(0, lambda: status_lbl.config(text="Hiányzó alapértelmezett driverek telepítése (pl. Generic Touchpad)..."))
             try:
+                import time
+                time.sleep(1.5) # Kis várakozás, hogy a felirat biztosan látszódjon a GUI-n
                 subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                time.sleep(3.5) # Várjunk egy kicsit, mert a scan-devices azonnal kilép, de a Windows a háttérben még dolgozik az eszközökön
             except Exception as ex:
                 print(f"Hiba a PnP hardver scan során: {ex}")
 
@@ -499,7 +502,10 @@ class DriverCleanerApp(tk.Tk):
 
                 if online:
                     self.after(0, lambda: status_lbl.config(text="Hardverváltozások keresése az Eszközkezelőben..."))
+                    import time
+                    time.sleep(1.5)
                     subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                    time.sleep(3.5)
                 else:
                     # Create an auto-run script in the target Windows Startup folder
                     try:
