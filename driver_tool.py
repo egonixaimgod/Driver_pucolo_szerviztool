@@ -176,29 +176,58 @@ class DriverCleanerApp(tk.Tk):
         if not messagebox.askyesno("Megerősítés", f"Biztosan törölni szeretnéd a kiválasztott {len(selected)} drivert és az eszközökről is eltávolítod?"):
             return
             
-        success_count = 0
-        fail_count = 0
+        prog_win = tk.Toplevel(self)
+        prog_win.title("Törlés folyamatban...")
+        prog_win.geometry("450x150")
+        prog_win.transient(self)
+        prog_win.grab_set()
+
+        lbl = ttk.Label(prog_win, text=f"{len(selected)} driver végleges eltávolítása folyamatban...\nKérlek várj!", justify=tk.CENTER)
+        lbl.pack(pady=10)
+
+        progress = ttk.Progressbar(prog_win, orient=tk.HORIZONTAL, length=350, mode='determinate')
+        progress.pack(pady=10)
+        progress.config(maximum=len(selected))
         
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        
-        for item in selected:
-            published_name = self.tree.item(item, "values")[0]
-            try:
-                # /uninstall /force removes it from driver store AND attempts uninstall from active devices
-                res = subprocess.run(['pnputil', '/delete-driver', published_name, '/uninstall', '/force'], 
-                                   capture_output=True, text=True, startupinfo=startupinfo)
-                if res.returncode == 0 or "Deleted" in res.stdout or "törölve" in res.stdout:
-                    success_count += 1
-                else:
-                    fail_count += 1
-                    print(f"Hiba a {published_name} törlésekor: {res.stdout}")
-            except Exception as e:
-                fail_count += 1
-                print(f"Kivétel a {published_name} törlésekor: {e}")
+        status_lbl = ttk.Label(prog_win, text="Inicializálás...", font=("Arial", 8))
+        status_lbl.pack(pady=5)
+
+        items_to_delete = [self.tree.item(item, "values")[0] for item in selected]
+
+        def worker():
+            success_count = 0
+            fail_count = 0
+            
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+            for i, published_name in enumerate(items_to_delete):
+                def update_status(txt=f"{published_name} törlése ({i+1}/{len(items_to_delete)})...", val=i):
+                    status_lbl.config(text=txt)
+                    progress['value'] = val
+                self.after(0, update_status)
                 
-        messagebox.showinfo("Eredmény", f"Sikeresen törölve: {success_count}\nNem sikerült: {fail_count}")
-        self.refresh_drivers()
+                try:
+                    res = subprocess.run(['pnputil', '/delete-driver', published_name, '/uninstall', '/force'], 
+                                       capture_output=True, text=True, startupinfo=startupinfo)
+                    if res.returncode == 0 or "Deleted" in res.stdout or "törölve" in res.stdout:
+                        success_count += 1
+                    else:
+                        fail_count += 1
+                        print(f"Hiba a {published_name} törlésekor: {res.stdout}")
+                except Exception as e:
+                    fail_count += 1
+                    print(f"Kivétel a {published_name} törlésekor: {e}")
+
+            def finish():
+                if prog_win.winfo_exists():
+                    prog_win.destroy()
+                messagebox.showinfo("Eredmény", f"Sikeresen törölve: {success_count}\nNem sikerült: {fail_count}")
+                self.refresh_drivers()
+
+            self.after(0, finish)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def check_wu_status(self):
         try:
