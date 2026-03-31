@@ -219,25 +219,56 @@ class DriverCleanerApp(tk.Tk):
                     fail_count += 1
                     print(f"Kivétel a {published_name} törlésekor: {e}")
 
-            # Utolsó lépés: kényszerítsük a Windowst, hogy a beépített "generic" driverekkel (pl. generikus i2c/ps2 touchpad) rögtön pótolja a hiányt!
-            self.after(0, lambda: status_lbl.config(text="Hiányzó alapértelmezett driverek telepítése (pl. Generic Touchpad)..."))
+            def finish_delete():
+                if prog_win.winfo_exists():
+                    prog_win.destroy()
+                messagebox.showinfo("Eredmény", f"Sikeresen törölve: {success_count}\nNem sikerült: {fail_count}\n\nMost a program újraellenőrzi a hardvereket a gyári illesztők betöltéséhez.")
+                
+                # Második lépés: indítsunk egy új ablakot a scan-devices-hoz!
+                self._run_hardware_scan_window()
+
+            self.after(0, finish_delete)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_hardware_scan_window(self):
+        scan_win = tk.Toplevel(self)
+        scan_win.title("Hardverek ellenőrzése...")
+        scan_win.geometry("450x150")
+        scan_win.transient(self)
+        scan_win.grab_set()
+
+        lbl = ttk.Label(scan_win, text="Hiányzó Windows alapértelmezett driverek scannelése...\nEzután mennie kell a Touchpadnek alap driverekkel is!", justify=tk.CENTER)
+        lbl.pack(pady=10)
+
+        progress = ttk.Progressbar(scan_win, orient=tk.HORIZONTAL, length=350, mode='indeterminate')
+        progress.pack(pady=10)
+        progress.start(15)
+
+        status_lbl = ttk.Label(scan_win, text="Kérlek várj...", font=("Arial", 8))
+        status_lbl.pack(pady=5)
+
+        def scan_worker():
             try:
                 import time
-                time.sleep(1.5) # Kis várakozás, hogy a felirat biztosan látszódjon a GUI-n
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                
+                time.sleep(1) # Pici pihenő
                 subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
-                time.sleep(3.5) # Várjunk egy kicsit, mert a scan-devices azonnal kilép, de a Windows a háttérben még dolgozik az eszközökön
+                time.sleep(3) # Várjunk, amíg a Windows a háttérben telepíti az eszközöket
             except Exception as ex:
                 print(f"Hiba a PnP hardver scan során: {ex}")
 
-            def finish():
-                if prog_win.winfo_exists():
-                    prog_win.destroy()
-                messagebox.showinfo("Eredmény", f"Sikeresen törölve: {success_count}\nNem sikerült: {fail_count}\n\nA hardverváltozások ellenőrzése is lefutott, így a gyári/generikus drivereknek (pl. Touchpad) mostantól menniük kell harmadik féltől származó szoftver nélkül is!")
+            def finish_scan():
+                if scan_win.winfo_exists():
+                    scan_win.destroy()
+                messagebox.showinfo("Kész", "Az alapértelmezett Windows illesztők (pl. Generic Touchpad) beállítása befejeződött!\nMost már működnie kell az eszközöknek.")
                 self.refresh_drivers()
 
-            self.after(0, finish)
+            self.after(0, finish_scan)
 
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=scan_worker, daemon=True).start()
 
     def check_wu_status(self):
         try:
