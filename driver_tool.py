@@ -389,24 +389,53 @@ class DriverCleanerApp(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def restore_drivers(self):
-        source_dir = filedialog.askdirectory(title="Válassz ki egy korábban kimentett driver mappát a visszatöltéshez")
-        if not source_dir:
-            return
+        answer = messagebox.askyesnocancel(
+            "Visszaállítási Mód",
+            "ÉLŐRENDSZERRE (erre a futó Windowsra) akarod visszatenni a drivereket?\n\n"
+            "IGEN: Jelenlegi futó rendszerre (Élő mód: PnP Util)\n"
+            "NEM: Másik/Halott meghajtóra (Offline WinPE mód: DISM)\n"
+            "MÉGSE: Megszakítás"
+        )
+        
+        if answer is None: return
+        elif answer: self.run_online_restore()
+        else: self.run_offline_restore()
 
+    def run_online_restore(self):
+        source_dir = filedialog.askdirectory(title="ÉLŐ MÓD: Válassz egy korábban kimentett driver mappát")
+        if not source_dir: return
+        self._start_restore_thread(online=True, source_dir=source_dir, target_dir=None)
+
+    def run_offline_restore(self):
+        target_dir = filedialog.askdirectory(title="OFFLINE MÓD: 1. Válaszd ki a HALOTT WINDOWS MEGHAJTÓJÁT (pl. C:\ vagy D:\)")
+        if not target_dir: return
+        
+        if not os.path.exists(os.path.join(target_dir, "Windows")) and not target_dir.lower().endswith("windows"):
+            if not messagebox.askyesno("Figyelem", f"Ebben a mappában nem találok 'Windows' almappát: {target_dir}\nBiztosan jó helyet adtál meg a célrendszernek?"):
+                return
+                
+        source_dir = filedialog.askdirectory(title="OFFLINE MÓD: 2. Válassz ki a kimentett driver mappát, amit betöltünk")
+        if not source_dir: return
+        
+        self._start_restore_thread(online=False, source_dir=source_dir, target_dir=target_dir)
+
+    def _start_restore_thread(self, online, source_dir, target_dir):
         prog_win = tk.Toplevel(self)
-        prog_win.title("Visszaállítás és felismertetés folyamatban...")
+        title_txt = "Élő rendszer frissítése..." if online else f"Offline WinPE Integrálás: {target_dir}"
+        prog_win.title(title_txt)
         prog_win.geometry("550x180")
         prog_win.transient(self)
         prog_win.grab_set()
 
-        lbl = ttk.Label(prog_win, text=f"Illesztőprogramok rátelepítése a jelenlegi gépre...\nKérlek várj, amíg újraellenőrzi a hardvereket.", justify=tk.CENTER)
+        lbl_txt = "Illesztőprogramok rátelepítése a jelenlegi gépre...\nKérlek várj!" if online else f"Illesztőprogramok befűzése a(z) {target_dir} meghajtóra...\nEz eltarthat egy darabig!"
+        lbl = ttk.Label(prog_win, text=lbl_txt, justify=tk.CENTER)
         lbl.pack(pady=10)
 
         progress = ttk.Progressbar(prog_win, orient=tk.HORIZONTAL, length=450, mode='indeterminate')
         progress.pack(pady=10)
         progress.start(15)
         
-        status_lbl = ttk.Label(prog_win, text="Folyamat indítása...", font=("Arial", 8))
+        status_lbl = ttk.Label(prog_win, text="Parancs indítása...", font=("Arial", 8))
         status_lbl.pack(pady=5)
 
         def worker():
@@ -414,9 +443,10 @@ class DriverCleanerApp(tk.Tk):
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 
-                # A pnputil ráerőszakolja a mappában található drivereket a futó eszközökre
-                # ha nincs még rajtuk, az /install kapcsolóval feléleszti őket
-                cmd = ['pnputil', '/add-driver', os.path.join(source_dir, "*.inf"), '/subdirs', '/install']
+                if online:
+                    cmd = ['pnputil', '/add-driver', os.path.join(source_dir, "*.inf"), '/subdirs', '/install']
+                else:
+                    cmd = ['dism', f'/Image:{target_dir}', '/Add-Driver', f'/Driver:{source_dir}', '/Recurse']
                 
                 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, 
                                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -431,15 +461,19 @@ class DriverCleanerApp(tk.Tk):
 
                 process.wait()
 
-                # Eszközök újraolvasása, ha valami beragadt volna (Scan for hardware changes)
-                self.after(0, lambda: status_lbl.config(text="Hardverváltozások keresése az Eszközkezelőben..."))
-                subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                if online:
+                    self.after(0, lambda: status_lbl.config(text="Hardverváltozások keresése az Eszközkezelőben..."))
+                    subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
 
                 def finish():
                     if prog_win.winfo_exists():
                         prog_win.destroy()
-                    messagebox.showinfo("Kész", "A driverek automatikus újra-felismertetése és ráerőltetése befejeződött!\nMost már a Touchpadnek és a többi beragadt modulnak is mennie kell!\n\n(Ha mégis kell, indítsd újra a számítógépet!)")
-                    self.refresh_drivers()
+                    if online:
+                        messagebox.showinfo("Kész", "A driverek automatikus (Élő) felismertetése befejeződött!\nA Touchpadnak már mennie kell.")
+                        self.refresh_drivers()
+                    else:
+                        msg = "Az offline driver integrálás (DISM) a megadott meghajtón befejeződött!\n\nIndítsd újra a számítógépet a normál rendszerről. A Windows bootolás közben fogja észlelni és telepíteni az új eszközöket."
+                        messagebox.showinfo("Offline Kész", msg)
 
                 self.after(0, finish)
 
@@ -447,7 +481,7 @@ class DriverCleanerApp(tk.Tk):
                 def on_err(err=e):
                     if prog_win.winfo_exists():
                         prog_win.destroy()
-                    messagebox.showerror("Kivétel", f"Visszaállítási hiba:\n{str(err)}")
+                    messagebox.showerror("Kivétel", f"Hiba történt:\n{str(err)}")
                 self.after(0, on_err)
 
         threading.Thread(target=worker, daemon=True).start()
