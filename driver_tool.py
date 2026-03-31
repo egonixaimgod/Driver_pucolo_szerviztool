@@ -8,6 +8,21 @@ import winreg
 import re
 from datetime import datetime
 import threading
+import logging
+
+# Globális logolás beállítása, amely abba a mappába teszi a logot, ahonnan az exe-t futtatják
+log_filename = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "driver_tool_debug.log")
+logging.basicConfig(
+    filename=log_filename, 
+    level=logging.DEBUG, 
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    encoding='utf-8'
+)
+logging.info("==================================================")
+logging.info("DRIVER TOOL ELINDITVA")
+logging.info(f"Futtatasi konyvtar: {os.getcwd()}")
+logging.info("==================================================")
 
 def is_admin():
     try:
@@ -201,6 +216,7 @@ class DriverCleanerApp(tk.Tk):
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             
+            logging.info(f"Kijelolt driverek torlese indult ({len(items_to_delete)} db)")
             for i, published_name in enumerate(items_to_delete):
                 def update_status(txt=f"{published_name} törlése ({i+1}/{len(items_to_delete)})...", val=i):
                     status_lbl.config(text=txt)
@@ -212,12 +228,17 @@ class DriverCleanerApp(tk.Tk):
                                        capture_output=True, text=True, startupinfo=startupinfo)
                     if res.returncode == 0 or "Deleted" in res.stdout or "törölve" in res.stdout:
                         success_count += 1
+                        logging.info(f"SIKER: {published_name} torolve. Kimenet: {res.stdout.strip()}")
                     else:
                         fail_count += 1
+                        logging.error(f"HIBA: {published_name} torlesekor. Return code: {res.returncode}. Kimenet: {res.stdout.strip()}")
                         print(f"Hiba a {published_name} törlésekor: {res.stdout}")
                 except Exception as e:
                     fail_count += 1
+                    logging.exception(f"Kivétel a {published_name} torlese kozben: {e}")
                     print(f"Kivétel a {published_name} törlésekor: {e}")
+
+            logging.info(f"Torles befejezve. Sikeres: {success_count}, Sikertelen: {fail_count}")
 
             def finish_delete():
                 if prog_win.winfo_exists():
@@ -518,18 +539,22 @@ class DriverCleanerApp(tk.Tk):
                 else:
                     cmd = ['dism', f'/Image:{target_dir}', '/Add-Driver', f'/Driver:{source_dir}', '/Recurse']
                 
+                logging.info(f"Futtatas ({'Online' if online else 'Offline'}): {' '.join(cmd)}")
+                
                 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, 
                                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
                 
                 for line in process.stdout:
                     line = line.strip()
                     if not line: continue
+                    logging.debug(f"[KIMENET] {line}")
                     def update_lbl(txt=line):
                         short_txt = txt if len(txt) < 70 else txt[:67] + "..."
                         status_lbl.config(text=short_txt)
                     self.after(0, update_lbl)
 
                 process.wait()
+                logging.info(f"Folyamat befejezodott. Return code: {process.returncode}")
 
                 if online:
                     self.after(0, lambda: status_lbl.config(text="Hardverváltozások keresése az Eszközkezelőben..."))
@@ -541,8 +566,10 @@ class DriverCleanerApp(tk.Tk):
                     # Create an auto-run script in the target Windows Startup folder
                     try:
                         startup_dir = os.path.join(target_dir, "ProgramData", "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+                        logging.info(f"Startup mappa ellenorzese: {startup_dir}")
                         if os.path.exists(startup_dir):
                             bat_path = os.path.join(startup_dir, "auto_pnputil_scan.bat")
+                            logging.info(f"BAT fajl letrehozasa: {bat_path}")
                             bat_content = "@echo off\r\n" \
                                           "set LOGFILE=\"C:\\Users\\Public\\Desktop\\driver_startup_log.txt\"\r\n" \
                                           "echo ---------------------------------------- >> %LOGFILE%\r\n" \
