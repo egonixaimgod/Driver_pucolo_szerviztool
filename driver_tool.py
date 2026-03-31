@@ -219,10 +219,17 @@ class DriverCleanerApp(tk.Tk):
                     fail_count += 1
                     print(f"Kivétel a {published_name} törlésekor: {e}")
 
+            # Utolsó lépés: kényszerítsük a Windowst, hogy a beépített "generic" driverekkel (pl. generikus i2c/ps2 touchpad) rögtön pótolja a hiányt!
+            self.after(0, lambda: status_lbl.config(text="Hiányzó alapértelmezett driverek telepítése (pl. Generic Touchpad)..."))
+            try:
+                subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+            except Exception as ex:
+                print(f"Hiba a PnP hardver scan során: {ex}")
+
             def finish():
                 if prog_win.winfo_exists():
                     prog_win.destroy()
-                messagebox.showinfo("Eredmény", f"Sikeresen törölve: {success_count}\nNem sikerült: {fail_count}")
+                messagebox.showinfo("Eredmény", f"Sikeresen törölve: {success_count}\nNem sikerült: {fail_count}\n\nA hardverváltozások ellenőrzése is lefutott, így a gyári/generikus drivereknek (pl. Touchpad) mostantól menniük kell harmadik féltől származó szoftver nélkül is!")
                 self.refresh_drivers()
 
             self.after(0, finish)
