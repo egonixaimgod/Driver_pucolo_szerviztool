@@ -493,6 +493,21 @@ class DriverCleanerApp(tk.Tk):
                 if online:
                     self.after(0, lambda: status_lbl.config(text="Hardverváltozások keresése az Eszközkezelőben..."))
                     subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                else:
+                    # Create an auto-run script in the target Windows Startup folder
+                    try:
+                        startup_dir = os.path.join(target_dir, "ProgramData", "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+                        if os.path.exists(startup_dir):
+                            bat_path = os.path.join(startup_dir, "auto_pnputil_scan.bat")
+                            bat_content = "@echo off\r\n" \
+                                          "echo Hardverek ellenorzese... kerlek varj!\r\n" \
+                                          "timeout /t 5 /nobreak >nul\r\n" \
+                                          "pnputil /scan-devices\r\n" \
+                                          "del \"%~f0\"\r\n"
+                            with open(bat_path, "w", encoding="utf-8") as f:
+                                f.write(bat_content)
+                    except Exception as ex:
+                        print(f"Nem sikerült létrehozni a startup scriptet: {ex}")
 
                 def finish():
                     if prog_win.winfo_exists():
@@ -501,7 +516,7 @@ class DriverCleanerApp(tk.Tk):
                         messagebox.showinfo("Kész", "A driverek automatikus (Élő) felismertetése befejeződött!\nA Touchpadnak már mennie kell.")
                         self.refresh_drivers()
                     else:
-                        msg = "Az offline driver integrálás (DISM) a megadott meghajtón befejeződött!\n\nIndítsd újra a számítógépet a normál rendszerről. A Windows bootolás közben fogja észlelni és telepíteni az új eszközöket."
+                        msg = "Az offline driver integrálás (DISM) a megadott meghajtón befejeződött!\n\nBiztonsági intézkedésként betettünk egy automatikusan lefutó szkriptet az Indítópultba. Újraindítás után a Windows automatikusan újraellenőrzi a hardvereket (pl. Touchpad), anélkül hogy egeret kéne használnod."
                         messagebox.showinfo("Offline Kész", msg)
 
                 self.after(0, finish)
