@@ -7,6 +7,7 @@ import os
 import winreg
 import re
 from datetime import datetime
+import threading
 
 def is_admin():
     try:
@@ -293,23 +294,96 @@ class DriverCleanerApp(tk.Tk):
         backup_folder = os.path.join(dest_dir, f"Driver_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         os.makedirs(backup_folder, exist_ok=True)
         
-        try:
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            
-            messagebox.showinfo("Folyamatban", f"Driverek exportálása a(z) {backup_folder} mappába...\nKérlek várj, ez hosszú időt is igénybe vehet.")
-            
-            res = subprocess.run(['dism', '/online', '/export-driver', f'/destination:{backup_folder}'], 
-                                 capture_output=True, text=True, startupinfo=startupinfo)
-                                 
-            if res.returncode == 0 or "successful" in res.stdout or "sikeres" in res.stdout:
-                msg = f"A harmadik fél (third-party) driverek sikeresen lementve ide:\n{backup_folder}\n\nHa baj van, Sergei Strelec WinPE-ben a dism++ szoftverrel vagy parancssorból visszarakhatod őket!"
-                messagebox.showinfo("Sikeres Export", msg)
-            else:
-                messagebox.showerror("Hiba", f"A dism hibaüzenettel tért vissza:\n{res.stdout}\n{res.stderr}")
-        except Exception as e:
-            messagebox.showerror("Kivétel", f"Váratlan hiba az exportálás során:\n{str(e)}")
+        # Létrehozunk egy felugró ablakot a progress barnak
+        prog_win = tk.Toplevel(self)
+        prog_win.title("Exportálás folyamatban...")
+        prog_win.geometry("500x180")
+        prog_win.transient(self)
+        prog_win.grab_set()  # Letiltja a többi ablak kattintását, amíg ez megy
 
+        lbl = ttk.Label(prog_win, text=f"Driverek kimentése folyamatban ide:\n{backup_folder}\nKérlek várj...", justify=tk.CENTER)
+        lbl.pack(pady=10)
+
+        # Determinate csúszka (0-tól maxig megy)
+        progress = ttk.Progressbar(prog_win, orient=tk.HORIZONTAL, length=400, mode='determinate')
+        progress.pack(pady=10)
+        
+        status_lbl = ttk.Label(prog_win, text="DISM indítása...", font=("Arial", 8))
+        status_lbl.pack(pady=5)
+
+        # Elsődleges tipp a maximumra a listából
+        total_guess = len(self.tree.get_children())
+        if total_guess > 0:
+            progress.config(maximum=total_guess)
+
+        def worker():
+            try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                
+                # Popen-nel futtatjuk, így tudjuk olvasni a kimenetet menet közben
+                process = subprocess.Popen(['dism', '/online', '/export-driver', f'/destination:{backup_folder}'], 
+                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, 
+                                           startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                success = False
+                output_log = []
+                current_val = 0
+                
+                for line in process.stdout:
+                    line = line.strip()
+                    if not line: continue
+                    output_log.append(line)
+                    
+                    # DISM kimenet keresése pl.: "1 of 22" vagy "1 / 22"
+                    m = re.search(r'(\d+)\s*(?:/|of|ből)\s*(\d+)', line.lower())
+                    if m:
+                        val = int(m.group(1))
+                        mx = int(m.group(2))
+                        def update_prog(v=val, mg=mx, txt=line):
+                            progress.config(maximum=max(mg, 1))
+                            progress['value'] = v
+                            short_txt = txt if len(txt) < 65 else txt[:62] + "..."
+                            status_lbl.config(text=short_txt)
+                        self.after(0, update_prog)
+                    elif ".inf" in line.lower():
+                        current_val += 1
+                        def step_prog(v=current_val, txt=line):
+                            if progress['maximum'] < v: progress.config(maximum=v+5)
+                            progress['value'] = v
+                            short_txt = txt if len(txt) < 65 else txt[:62] + "..."
+                            status_lbl.config(text=short_txt)
+                        self.after(0, step_prog)
+                    else:
+                        def set_txt(txt=line):
+                            short_txt = txt if len(txt) < 65 else txt[:62] + "..."
+                            status_lbl.config(text=short_txt)
+                        self.after(0, set_txt)
+
+                process.wait()
+                full_out = "\n".join(output_log)
+                if process.returncode == 0 or "successful" in full_out.lower() or "siker" in full_out.lower():
+                    success = True
+
+                def finish():
+                    if prog_win.winfo_exists():
+                        prog_win.destroy()
+                    if success:
+                        msg = f"A harmadik fél (third-party) driverek sikeresen lementve ide:\n{backup_folder}\n\nHa baj van, Sergei Strelec WinPE-ben a dism++ szoftverrel visszarakhatod őket!"
+                        messagebox.showinfo("Sikeres Export", msg)
+                    else:
+                        messagebox.showerror("Hiba", f"A dism hibaüzenettel tért vissza:\nLásd a logot vagy futtasd kézzel.")
+                self.after(0, finish)
+
+            except Exception as e:
+                def on_err(err=e):
+                    if prog_win.winfo_exists():
+                        prog_win.destroy()
+                    messagebox.showerror("Kivétel", f"Váratlan hiba az exportálás során:\n{str(err)}")
+                self.after(0, on_err)
+
+        # Külön szálon indítjuk, hogy a GUI reszponzív maradjon és lássuk a csúszkát
+        threading.Thread(target=worker, daemon=True).start()
 
 if __name__ == "__main__":
     if not is_admin():
