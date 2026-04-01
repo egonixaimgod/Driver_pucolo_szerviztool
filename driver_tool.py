@@ -521,8 +521,10 @@ class DriverCleanerApp(tk.Tk):
         os.makedirs(mount_dir, exist_ok=True)
         
         # Kiszedjük a fájl utakat és gondoskodunk a szóköz/backslash hibákról cmd paraméternek
-        wim_path = os.path.normpath(wim_path).replace("\\", "/")
-        mount_dir = os.path.normpath(mount_dir).replace("\\", "/")
+        wim_path = os.path.abspath(wim_path).replace("/", "\\")
+        mount_dir = os.path.abspath(mount_dir).replace("/", "\\")
+        dest_dir = os.path.abspath(dest_dir).replace("/", "\\")
+        target_folder = os.path.abspath(target_folder).replace("/", "\\")
         
         prog_win = tk.Toplevel(self)
         prog_win.title("WIM csatolás folyamatban...")
@@ -548,11 +550,16 @@ class DriverCleanerApp(tk.Tk):
                 # 1. Mount image
                 self.after(0, lambda: status_lbl.config(text="1/3: Képfájl csatolása a Temp mappába (Türelem, 4-5 perc is lehet!)..."))
                 logging.info(f"WIM mountolasa: {wim_path}")
-                # A shell=True és string interpoláció elkerüli, hogy a python lista-konvertáló hibás helyre tegye az idézőjeleket a DISM-nek
-                mount_cmd = f'dism /Mount-Image "/ImageFile:{wim_path}" /Index:1 "/MountDir:{mount_dir}" /ReadOnly'
-                res = subprocess.run(mount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
+                mount_cmd = [
+                    "dism", "/Mount-Image",
+                    f"/ImageFile:{wim_path}",
+                    "/Index:1",
+                    f"/MountDir:{mount_dir}",
+                    "/ReadOnly"
+                ]
+                res = subprocess.run(mount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
                 if res.returncode != 0:
-                    raise Exception(f"DISM Mount Hiba: {res.stdout}")
+                    raise Exception(f"DISM Mount Hiba: {res.stdout.strip()} Hiba_stderr: {res.stderr.strip()}")
                 
                 # 2. Másolás robocopy-val (az XCOPY vagy shutil gyakran hibázik hosszú file nevek miatt)
                 self.after(0, lambda: status_lbl.config(text="2/3: Gyári DriverStore másolása (1-2 GB adat)..."))
@@ -568,8 +575,8 @@ class DriverCleanerApp(tk.Tk):
                 # 3. Biztonságos Unmount
                 self.after(0, lambda: status_lbl.config(text="3/3: WIM leválasztása (Takarítás)..."))
                 logging.info("WIM unmountolasa...")
-                unmount_cmd = f'dism /Unmount-Image "/MountDir:{mount_dir}" /Discard'
-                subprocess.run(unmount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
+                unmount_cmd = ["dism", "/Unmount-Image", f"/MountDir:{mount_dir}", "/Discard"]
+                subprocess.run(unmount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
                 
                 try:
                     shutil.rmtree(mount_dir, ignore_errors=True)
@@ -582,8 +589,8 @@ class DriverCleanerApp(tk.Tk):
 
             except Exception as e:
                 logging.error(f"Hiba WIM kinyeresekor: {e}")
-                err_unmount = f'dism /Unmount-Image "/MountDir:{mount_dir}" /Discard'
-                subprocess.run(err_unmount, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
+                err_unmount = ["dism", "/Unmount-Image", f"/MountDir:{mount_dir}", "/Discard"]
+                subprocess.run(err_unmount, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
                 try:
                     shutil.rmtree(mount_dir, ignore_errors=True)
                 except: pass
