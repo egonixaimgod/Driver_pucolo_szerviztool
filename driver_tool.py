@@ -153,19 +153,22 @@ class DriverCleanerApp(tk.Tk):
         btn_frame = tk.Frame(self.driver_view, bg="#FFFFFF")
         btn_frame.pack(fill=tk.X, pady=5)
 
+        # Use grid for responsive layout
         refresh_btn = ttk.Button(btn_frame, text="Lista Frissítése (F5)", command=self.refresh_drivers)
-        refresh_btn.pack(side=tk.LEFT, padx=5)
+        refresh_btn.grid(row=0, column=0, padx=5, pady=5)
 
         select_all_btn = ttk.Button(btn_frame, text="Összes Kijelölése", command=self.select_all_drivers)
-        select_all_btn.pack(side=tk.LEFT, padx=5)
+        select_all_btn.grid(row=0, column=1, padx=5, pady=5)
 
-        
-        self.list_all_chk = ttk.Checkbutton(btn_frame, text="Minden Driver Listázása (Veszélyes!)", variable=self.list_all_var, command=self.on_list_all_toggle)
-        self.list_all_chk.pack(side=tk.LEFT, padx=10)
+        self.list_all_chk = ttk.Checkbutton(btn_frame, text="Minden Driver (Veszélyes!)", variable=self.list_all_var, command=self.on_list_all_toggle)
+        self.list_all_chk.grid(row=0, column=2, padx=5, pady=5)
 
         delete_btn = ttk.Button(btn_frame, text="Kiválasztott Driver(ek) TÖRLÉSE (Del)", command=self.delete_selected_drivers, style="Danger.TButton")
-        delete_btn.pack(side=tk.RIGHT, padx=5)
+        delete_btn.grid(row=1, column=0, columnspan=3, pady=(0, 5), sticky="ew", padx=5)
 
+        btn_frame.columnconfigure(0, weight=1)
+        btn_frame.columnconfigure(1, weight=1)
+        btn_frame.columnconfigure(2, weight=1)
 
         # -----------------------------
         # BACKUP & WIM VIEW CONTENT
@@ -173,22 +176,25 @@ class DriverCleanerApp(tk.Tk):
         backup_frame = ttk.LabelFrame(self.backup_view, text="Biztonsági Mentés (Driver Export és Visszaállítás)", padding=10)
         backup_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        rp_btn = ttk.Button(backup_frame, text="Új Rendszer-visszaállítási Pont Készítése", command=self.create_restore_point)
-        rp_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        rp_btn = ttk.Button(backup_frame, text="Új Rendszer-vissz. Pont", command=self.create_restore_point)
+        rp_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
 
-        export_btn = ttk.Button(backup_frame, text="Összes Third-Party Driver Lementése (Exportálás)", command=self.backup_drivers)
-        export_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        export_btn = ttk.Button(backup_frame, text="Összes Lementése (Export)", command=self.backup_drivers)
+        export_btn.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
-        restore_btn = ttk.Button(backup_frame, text="Lementett Driverek Visszaállítása (Automatikus)", command=self.restore_drivers)
-        restore_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        restore_btn = ttk.Button(backup_frame, text="Lementett Driverek Visszaállítása", command=self.restore_drivers)
+        restore_btn.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
+        backup_frame.columnconfigure(0, weight=1)
+        backup_frame.columnconfigure(1, weight=1)
 
         wim_frame = ttk.LabelFrame(self.backup_view, text="Extrém Helyreállítás: Gyári Windows (Alap) Driverek Kinyerése", padding=10)
         wim_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        wim_lbl = ttk.Label(wim_frame, text="Ha minden gyári driver törlődött (Billentyűzet, Touchpad, Standard USB), a Windows ISO-ból (install.wim) visszahozhatod!", font=("Segoe UI", 9))
+        wim_lbl = ttk.Label(wim_frame, text="Ha minden gyári driver törlődött (Billentyűzet, Touchpad, Standard USB), a Windows ISO-ból (install.wim) visszahozhatod!", font=("Segoe UI", 8), wraplength=480)
         wim_lbl.pack(pady=(0, 10))
 
-        wim_btn = ttk.Button(wim_frame, text="Alap Driverek Kinyerése (install.wim kiválasztása)", command=self.extract_wim_drivers)
+        wim_btn = ttk.Button(wim_frame, text="Alap Driverek Kinyerése (install.wim)", command=self.extract_wim_drivers)
         wim_btn.pack(pady=5)
 
 
@@ -199,13 +205,16 @@ class DriverCleanerApp(tk.Tk):
         wu_frame.pack(fill=tk.X, padx=10, pady=5)
 
         self.wu_status_lbl = ttk.Label(wu_frame, text="Állapot: Ismeretlen", font=("Segoe UI", 10, "bold"))
-        self.wu_status_lbl.pack(side=tk.LEFT, padx=10, pady=5)
+        self.wu_status_lbl.grid(row=0, column=0, columnspan=2, pady=5)
 
-        disable_wu_btn = ttk.Button(wu_frame, text="WU Driver Letöltés LETILTÁSA", command=self.disable_wu_drivers)
-        disable_wu_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        disable_wu_btn = ttk.Button(wu_frame, text="WU Letöltés LETILTÁSA", command=self.disable_wu_drivers)
+        disable_wu_btn.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
 
-        enable_wu_btn = ttk.Button(wu_frame, text="WU Driver Letöltés ENGEDÉLYEZÉSE", command=self.enable_wu_drivers)
-        enable_wu_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        enable_wu_btn = ttk.Button(wu_frame, text="WU Letöltés ENGEDÉLYEZÉSE", command=self.enable_wu_drivers)
+        enable_wu_btn.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        wu_frame.columnconfigure(0, weight=1)
+        wu_frame.columnconfigure(1, weight=1)
 
 
         # Show drivers by default
