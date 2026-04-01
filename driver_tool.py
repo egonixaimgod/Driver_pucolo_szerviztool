@@ -234,7 +234,7 @@ class DriverCleanerApp(tk.Tk):
             self.wu_view.pack(fill=tk.BOTH, expand=True)
 
     def change_target_os(self):
-        d = filedialog.askdirectory(title="Válaszd ki a halott Windows meghajtóját (pl. C:\ vagy D:\, amin a Windows mappa van!)")
+        d = filedialog.askdirectory(title="Válaszd ki a halott Windows meghajtóját (pl. C:\\ vagy D:\\, amin a Windows mappa van!)")
         if d:
             d = os.path.abspath(d).replace("/", "\\")
             if not os.path.exists(os.path.join(d, "Windows")):
@@ -662,7 +662,7 @@ class DriverCleanerApp(tk.Tk):
             # A végtelen frissítés-keresés (beragadás) javítása érdekében újraindítjuk a WU szolgáltatást
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            subprocess.run("net stop wuauserv && net start wuauserv", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run("net stop wuauserv & net start wuauserv", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
 
             messagebox.showinfo("Siker", "Windows Update driver telepítés sikeresen VISSZAÁLLÍTVA.\n\n(A Windows Update szolgáltatást újraindítottuk, így az 'örökké tartó' keresés megszűnik és megtalálja a frissítéseket!)")
             self.check_wu_status()
@@ -869,9 +869,7 @@ class DriverCleanerApp(tk.Tk):
                 driverstore_path = os.path.join(mount_dir, "Windows", "System32", "DriverStore", "FileRepository")
                 logging.info(f"DriverStore masolasa innen: {driverstore_path}")
                 if os.path.exists(driverstore_path):
-                    target_cmd = os.path.normpath(target_folder).replace("\\", "/")
-                    robo_cmd = f'robocopy "{driverstore_path}" "{target_cmd}" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /nc /ns /np'
-                    subprocess.run(robo_cmd, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
+                    shutil.copytree(driverstore_path, target_folder, dirs_exist_ok=True)
                 else:
                     raise Exception("A FileRepository (gyári driver mappa) nem található a csatolt WIM fájlban!")
                 
@@ -1070,76 +1068,75 @@ class DriverCleanerApp(tk.Tk):
                     process.wait()
                     write_log(f"\n--- Alapfolyamat befejeződött, visszatérési kód (Return Code): {process.returncode} ---")
 
-                if True:
-                    if online:
-                        write_log("Hardverváltozások keresése és eszközök frissítése az Eszközkezelőben...")
-                        import time
-                        time.sleep(1.5)
-                        scan_proc = subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW, capture_output=True, text=True, errors='replace')
-                        write_log("SCAN_DEVICES Kész! Kimenet:\n" + scan_proc.stdout)
-                        time.sleep(3.5)
-                    else:
-                        import shutil
-                        temp_drivers_dir_target = os.path.join(target_dir, "TempRunDrivers")
-                        write_log(f"Készül a Boot-idejű automatikus PnP telepítő... Ideiglenes fájlfa másolása:\n {source_dir} -> {temp_drivers_dir_target}")
+                if online:
+                    write_log("Hardverváltozások keresése és eszközök frissítése az Eszközkezelőben...")
+                    import time
+                    time.sleep(1.5)
+                    scan_proc = subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW, capture_output=True, text=True, errors='replace')
+                    write_log("SCAN_DEVICES Kész! Kimenet:\n" + scan_proc.stdout)
+                    time.sleep(3.5)
+                else:
+                    import shutil
+                    temp_drivers_dir_target = os.path.join(target_dir, "TempRunDrivers")
+                    write_log(f"Készül a Boot-idejű automatikus PnP telepítő... Ideiglenes fájlfa másolása:\n {source_dir} -> {temp_drivers_dir_target}")
+                    
+                    if os.path.exists(temp_drivers_dir_target):
+                        shutil.rmtree(temp_drivers_dir_target, ignore_errors=True)
+                    try:
+                        shutil.copytree(source_dir, temp_drivers_dir_target, dirs_exist_ok=True)
+                        write_log(f"Másolás SIKERES a TempRunDrivers alá.")
+                    except Exception as ee:
+                        write_log(f"HIBA a temp mappa másolása közben: {ee}")
+
+                    programdata_dir = os.path.join(target_dir, "ProgramData")
+                    os.makedirs(programdata_dir, exist_ok=True)
                         
-                        if os.path.exists(temp_drivers_dir_target):
-                            shutil.rmtree(temp_drivers_dir_target, ignore_errors=True)
+                    bat_path = os.path.join(programdata_dir, "auto_pnputil_scan.bat")
+                    bat_content = "@echo off\r\n" \
+                                  "set LOGFILE=\"%SystemDrive%\\Users\\Public\\driver_startup_log.txt\"\r\n" \
+                                  "echo ---------------------------------------- >> %LOGFILE%\r\n" \
+                                  "echo [%DATE% %TIME%] Boot elotti SYSTEM telepites service (No UAC! Azonnali!) >> %LOGFILE%\r\n" \
+                                  "echo [%DATE% %TIME%] Ideiglenes szerviz torlese a registrybol is... >> %LOGFILE%\r\n" \
+                                  "sc delete DriverRestoreSvc >> %LOGFILE% 2>&1\r\n" \
+                                  "echo [%DATE% %TIME%] Varakozas a Windows PlugAndPlay szolgaltatasara (15 sec max)... >> %LOGFILE%\r\n" \
+                                  "ping 127.0.0.1 -n 15 > nul\r\n" \
+                                  "echo [%DATE% %TIME%] Driverek betoltese (Csendes mod)... kerlek varj! >> %LOGFILE%\r\n" \
+                                  "pnputil /add-driver \"%SystemDrive%\\TempRunDrivers\\*.inf\" /subdirs /install >> %LOGFILE% 2>&1\r\n" \
+                                  "echo [%DATE% %TIME%] pnputil scan-devices inditasa... >> %LOGFILE%\r\n" \
+                                  "pnputil /scan-devices >> %LOGFILE% 2>&1\r\n" \
+                                  "echo [%DATE% %TIME%] Ideiglenes mappak torlese... >> %LOGFILE%\r\n" \
+                                  "rd /s /q \"%SystemDrive%\\TempRunDrivers\" >> %LOGFILE% 2>&1\r\n" \
+                                  "echo [%DATE% %TIME%] Befejezve. Torlom a scriptet. >> %LOGFILE%\r\n" \
+                                  "ping 127.0.0.1 -n 3 > nul\r\n" \
+                                  "(goto) 2>nul & del \"%~f0\"\r\n"
+                    with open(bat_path, "w", encoding="utf-8") as f:
+                        f.write(bat_content)
+                    write_log(f"BAT fájl regisztrálva a rendszerbe: {bat_path}")
+
+                    hive_path = os.path.join(target_dir, "Windows", "System32", "config", "SYSTEM")
+                    if os.path.exists(hive_path):
+                        write_log(f"Offline registry beinjektálása a HKLM\\OFFLINE_SYSTEM hive-ba ({hive_path})...")
+                        import winreg
                         try:
-                            shutil.copytree(source_dir, temp_drivers_dir_target, dirs_exist_ok=True)
-                            write_log(f"Másolás SIKERES a TempRunDrivers alá.")
-                        except Exception as ee:
-                            write_log(f"HIBA a temp mappa másolása közben: {ee}")
-
-                        programdata_dir = os.path.join(target_dir, "ProgramData")
-                        os.makedirs(programdata_dir, exist_ok=True)
-                            
-                        bat_path = os.path.join(programdata_dir, "auto_pnputil_scan.bat")
-                        bat_content = "@echo off\r\n" \
-                                      "set LOGFILE=\"%SystemDrive%\\Users\\Public\\driver_startup_log.txt\"\r\n" \
-                                      "echo ---------------------------------------- >> %LOGFILE%\r\n" \
-                                      "echo [%DATE% %TIME%] Boot elotti SYSTEM telepites service (No UAC! Azonnali!) >> %LOGFILE%\r\n" \
-                                      "echo [%DATE% %TIME%] Ideiglenes szerviz torlese a registrybol is... >> %LOGFILE%\r\n" \
-                                      "sc delete DriverRestoreSvc >> %LOGFILE% 2>&1\r\n" \
-                                      "echo [%DATE% %TIME%] Varakozas a Windows PlugAndPlay szolgaltatasara (15 sec max)... >> %LOGFILE%\r\n" \
-                                      "ping 127.0.0.1 -n 15 > nul\r\n" \
-                                      "echo [%DATE% %TIME%] Driverek betoltese (Csendes mod)... kerlek varj! >> %LOGFILE%\r\n" \
-                                      "pnputil /add-driver \"%SystemDrive%\\TempRunDrivers\\*.inf\" /subdirs /install >> %LOGFILE% 2>&1\r\n" \
-                                      "echo [%DATE% %TIME%] pnputil scan-devices inditasa... >> %LOGFILE%\r\n" \
-                                      "pnputil /scan-devices >> %LOGFILE% 2>&1\r\n" \
-                                      "echo [%DATE% %TIME%] Ideiglenes mappak torlese... >> %LOGFILE%\r\n" \
-                                      "rd /s /q \"%SystemDrive%\\TempRunDrivers\" >> %LOGFILE% 2>&1\r\n" \
-                                      "echo [%DATE% %TIME%] Befejezve. Torlom a scriptet. >> %LOGFILE%\r\n" \
-                                      "ping 127.0.0.1 -n 3 > nul\r\n" \
-                                      "(goto) 2>nul & del \"%~f0\"\r\n"
-                        with open(bat_path, "w", encoding="utf-8") as f:
-                            f.write(bat_content)
-                        write_log(f"BAT fájl regisztrálva a rendszerbe: {bat_path}")
-
-                        hive_path = os.path.join(target_dir, "Windows", "System32", "config", "SYSTEM")
-                        if os.path.exists(hive_path):
-                            write_log(f"Offline registry beinjektálása a HKLM\\OFFLINE_SYSTEM hive-ba ({hive_path})...")
-                            import winreg
+                            subprocess.run(['reg', 'load', 'HKLM\\OFFLINE_SYSTEM', hive_path], check=True, capture_output=True, text=True, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
                             try:
-                                subprocess.run(['reg', 'load', 'HKLM\\OFFLINE_SYSTEM', hive_path], check=True, capture_output=True, text=True, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-                                try:
-                                    key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, r'OFFLINE_SYSTEM\ControlSet001\Services\DriverRestoreSvc')
-                                    winreg.SetValueEx(key, 'Type', 0, winreg.REG_DWORD, 16)
-                                    winreg.SetValueEx(key, 'Start', 0, winreg.REG_DWORD, 2)
-                                    winreg.SetValueEx(key, 'ErrorControl', 0, winreg.REG_DWORD, 1)
-                                    bat_target_path = r'%SystemDrive%\ProgramData\auto_pnputil_scan.bat'
-                                    winreg.SetValueEx(key, 'ImagePath', 0, winreg.REG_EXPAND_SZ, bat_target_path)
-                                    winreg.SetValueEx(key, 'ObjectName', 0, winreg.REG_SZ, 'LocalSystem')
-                                    winreg.CloseKey(key)
-                                    write_log("Sikeresen felprogramoztuk az Offline Windows Registry-t az auto-installhoz (Boot Service)!")
-                                except Exception as rx:
-                                    write_log("HIBA A REGISTRY VÁLTOZÓK ÍRÁSÁNÁL: " + str(rx))
-                                finally:
-                                    subprocess.run(['reg', 'unload', 'HKLM\\OFFLINE_SYSTEM'], check=False, capture_output=True, text=True, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-                            except subprocess.CalledProcessError as e:
-                                write_log(f"REGISTRY MOUNT SIKERTELEN: Hibakód: {e.returncode}. Kimenet: {e.output}")
-                        else:
-                            write_log(f"FIGYELEM MS HIBA: Az offline rendszerleíró adatbázis nem található itt: {hive_path}")
+                                key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, r'OFFLINE_SYSTEM\ControlSet001\Services\DriverRestoreSvc')
+                                winreg.SetValueEx(key, 'Type', 0, winreg.REG_DWORD, 16)
+                                winreg.SetValueEx(key, 'Start', 0, winreg.REG_DWORD, 2)
+                                winreg.SetValueEx(key, 'ErrorControl', 0, winreg.REG_DWORD, 1)
+                                bat_target_path = r'%SystemDrive%\ProgramData\auto_pnputil_scan.bat'
+                                winreg.SetValueEx(key, 'ImagePath', 0, winreg.REG_EXPAND_SZ, bat_target_path)
+                                winreg.SetValueEx(key, 'ObjectName', 0, winreg.REG_SZ, 'LocalSystem')
+                                winreg.CloseKey(key)
+                                write_log("Sikeresen felprogramoztuk az Offline Windows Registry-t az auto-installhoz (Boot Service)!")
+                            except Exception as rx:
+                                write_log("HIBA A REGISTRY VÁLTOZÓK ÍRÁSÁNÁL: " + str(rx))
+                            finally:
+                                subprocess.run(['reg', 'unload', 'HKLM\\OFFLINE_SYSTEM'], check=False, capture_output=True, text=True, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                        except subprocess.CalledProcessError as e:
+                            write_log(f"REGISTRY MOUNT SIKERTELEN: Hibakód: {e.returncode}. Kimenet: {e.output}")
+                    else:
+                        write_log(f"FIGYELEM MS HIBA: Az offline rendszerleíró adatbázis nem található itt: {hive_path}")
 
                 self.after(0, lambda: progress.stop())
                 write_log("==== MINDEN FOLYAMAT BEFEJEZŐDÖTT ====")
@@ -1151,10 +1148,14 @@ class DriverCleanerApp(tk.Tk):
                         if hasattr(self, 'refresh_drivers'): self.refresh_drivers()
                         
                         # Set log frame color based on result code to visually inform user
-                        if process.returncode == 0:
-                            log_text.config(fg="#00FF00")   # green
-                        else:
-                            log_text.config(fg="#FFFF00")   # yellow/warning
+                        try:
+                            if process.returncode == 0:
+                                log_text.config(fg="#00FF00")   # green
+                            else:
+                                log_text.config(fg="#FFFF00")   # yellow/warning
+                        except NameError:
+                            # inbox restore has no process variable
+                            log_text.config(fg="#00FF00")
 
                     except: pass
                 self.after(0, finish_state)
