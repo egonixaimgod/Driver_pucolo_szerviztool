@@ -50,8 +50,19 @@ class DriverCleanerApp(tk.Tk):
         style.configure("TButton", font=("Segoe UI", 10), padding=6)
         style.configure("Danger.TButton", font=("Segoe UI", 10), foreground="red")
         
+        # Ablak ikon beállítása (ico + PhotoImage fallback)
+        icon_path = resource_path("icon.ico")
         try:
-            self.iconbitmap(resource_path("icon.ico"))
+            self.iconbitmap(icon_path)
+        except:
+            pass
+        # PhotoImage fallback - ha az iconbitmap nem működik (pl. PyInstaller)
+        try:
+            from PIL import Image, ImageTk
+            _icon_img = Image.open(icon_path)
+            _icon_img = _icon_img.resize((32, 32), Image.LANCZOS)
+            self._app_icon = ImageTk.PhotoImage(_icon_img)
+            self.iconphoto(True, self._app_icon)
         except:
             pass
         
@@ -655,9 +666,21 @@ class DriverCleanerApp(tk.Tk):
                         winreg.SetValueEx(key, "ExcludeWUDriversInQualityUpdate", 0, winreg.REG_DWORD, 0)
                 except: pass
 
+            # SearchOrderConfig - winreg + reg.exe dupla biztosítás
             key_path2 = r"SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching"
-            with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path2, 0, winreg.KEY_WRITE) as key:
-                winreg.SetValueEx(key, "SearchOrderConfig", 0, winreg.REG_DWORD, 1)
+            try:
+                with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path2, 0, winreg.KEY_WRITE) as key:
+                    winreg.SetValueEx(key, "SearchOrderConfig", 0, winreg.REG_DWORD, 1)
+            except: pass
+            # reg.exe fallback (ha a winreg kulcs írás csendben elbukik)
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            subprocess.run(['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching', '/v', 'SearchOrderConfig', '/t', 'REG_DWORD', '/d', '1', '/f'],
+                           startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW, capture_output=True)
+
+            # Policy törlés reg.exe-vel is (dupla biztosítás)
+            subprocess.run(['reg', 'delete', r'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', '/v', 'ExcludeWUDriversInQualityUpdate', '/f'],
+                           startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW, capture_output=True)
 
             # Töröljük a teljes Update letiltást abban az esetben, ha valami más program esetleg betette
             try:
@@ -666,8 +689,6 @@ class DriverCleanerApp(tk.Tk):
             except: pass
 
             # WU szolgáltatás leállítása + CACHE TÖRLÉS + újraindítás (az örök keresés javítása!)
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             subprocess.run("net stop wuauserv & net stop bits", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
             
             # WU cache törlése - ez oldja meg az örökké tartó "frissítések keresése" problémát
