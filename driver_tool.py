@@ -1013,14 +1013,23 @@ class DriverCleanerApp(tk.Tk):
                 if online:
                     cmd = ['pnputil', '/add-driver', f"{norm_source}\\\*.inf", '/subdirs', '/install']
                 else:
-                    scratch_dir = os.path.join(norm_target, "Scratch")
-                    try:
-                        os.makedirs(scratch_dir, exist_ok=True)
-                        write_log(f"Scratch mappa létrehozva: {scratch_dir}")
-                    except Exception as e:
-                        write_log(f"Figyelem: Scratch mappa létrehozása sikertelen ({scratch_dir}): {e}")
-                    
-                    cmd = ['dism', f'/Image:{norm_target}', '/Add-Driver', f'/Driver:{norm_source}', '/Recurse', '/ForceUnsigned', f'/ScratchDir:{scratch_dir}']
+                    is_inbox_restore = "Windows_Gyari_Alap_Driverek" in norm_source
+
+                    if is_inbox_restore:
+                        write_log("VIGYÁZAT: Gyári Windows (inbox) driverek felismerve! A DISM kihagyása, közvetlen másolás a DriverStore alá...")
+                        target_filerepo = os.path.join(norm_target, "Windows", "System32", "DriverStore", "FileRepository")
+                        # Robocopy a legbiztonságosabb könyvtárszerkezet szinkronizáláshoz hosszú elérési utakkal
+                        cmd = ['robocopy', norm_source, target_filerepo, '/E', '/R:0', '/W:0', '/MT:8', '/NFL', '/NDL', '/NJH']
+                        write_log(f"Fájlok tömeges átmásolása: {norm_source} -> {target_filerepo}")
+                    else:
+                        scratch_dir = os.path.join(norm_target, "Scratch")
+                        try:
+                            os.makedirs(scratch_dir, exist_ok=True)
+                            write_log(f"Scratch mappa létrehozva: {scratch_dir}")
+                        except Exception as e:
+                            write_log(f"Figyelem: Scratch mappa létrehozása sikertelen ({scratch_dir}): {e}")
+                        
+                        cmd = ['dism', f'/Image:{norm_target}', '/Add-Driver', f'/Driver:{norm_source}', '/Recurse', '/ForceUnsigned', f'/ScratchDir:{scratch_dir}']
                 
                 write_log(f"Végrehajtandó parancssor: {' '.join(cmd)}")
 
