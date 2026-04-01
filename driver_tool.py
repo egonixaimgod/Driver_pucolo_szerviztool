@@ -107,6 +107,15 @@ class DriverCleanerApp(tk.Tk):
         delete_btn = ttk.Button(btn_frame, text="Kiválasztott Driver(ek) TÖRLÉSE", command=self.delete_selected_drivers)
         delete_btn.pack(side=tk.RIGHT, padx=5)
 
+        # Teljes billentyűzetes navigáció az "egér nélküli" gépekhez
+        self.bind_class("TButton", "<Return>", lambda e: e.widget.invoke())  # Enter gomb is nyomja meg a fókuszált Gombot (nem csak a Space)
+        self.bind("<F5>", lambda e: self.refresh_drivers())                  # F5 frissít
+        self.bind("<Control-a>", lambda e: self.select_all_drivers())        # Ctrl+A kijelöl mindent
+        self.bind("<Delete>", lambda e: self.delete_selected_drivers())      # Del gomb törli a kijelölteket
+        
+        # Alapértelmezetten a listára dobjuk a fókuszt induláskor
+        self.after(500, lambda: self.tree.focus_set())
+
     def get_third_party_drivers(self):
         try:
             # Hide console window
