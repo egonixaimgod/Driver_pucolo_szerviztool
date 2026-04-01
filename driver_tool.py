@@ -413,7 +413,12 @@ class DriverCleanerApp(tk.Tk):
             with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path2, 0, winreg.KEY_WRITE) as key:
                 winreg.SetValueEx(key, "SearchOrderConfig", 0, winreg.REG_DWORD, 0)
                 
-            messagebox.showinfo("Siker", "Windows Update driver telepítés sikeresen LETILTVA.")
+            # Restart Windows Update Service to apply changes and unfreeze it
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            subprocess.run("net stop wuauserv & net start wuauserv", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            messagebox.showinfo("Siker", "Windows Update driver telepítés sikeresen LETILTVA.\n\n(A Windows Update szolgáltatás újraindult a háttérben.)")
             self.check_wu_status()
         except PermissionError:
             messagebox.showerror("Hiba", "Nincs jogosultság a Registry írásához. Futtasd Rendszergazdaként!")
@@ -424,16 +429,28 @@ class DriverCleanerApp(tk.Tk):
         try:
             key_path = r"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
             try:
-                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_WRITE) as key:
-                    winreg.DeleteValue(key, "ExcludeWUDriversInQualityUpdate")
-            except FileNotFoundError:
+                # Kifejezetten 0-ra állítjuk, hogy a policy garantáltan törlődjön a gyorsítótárból is
+                with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_WRITE) as key:
+                    winreg.SetValueEx(key, "ExcludeWUDriversInQualityUpdate", 0, winreg.REG_DWORD, 0)
+            except Exception:
                 pass
 
             key_path2 = r"SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching"
             with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path2, 0, winreg.KEY_WRITE) as key:
                 winreg.SetValueEx(key, "SearchOrderConfig", 0, winreg.REG_DWORD, 1)
 
-            messagebox.showinfo("Siker", "Windows Update driver telepítés sikeresen VISSZAÁLLÍTVA.")
+            # Töröljük a teljes Update letiltást abban az esetben, ha valami más program esetleg betette
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU", 0, winreg.KEY_WRITE) as key:
+                    winreg.DeleteValue(key, "NoAutoUpdate")
+            except: pass
+
+            # A végtelen frissítés-keresés (beragadás) javítása érdekében újraindítjuk a WU szolgáltatást
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            subprocess.run("net stop wuauserv && net start wuauserv", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+
+            messagebox.showinfo("Siker", "Windows Update driver telepítés sikeresen VISSZAÁLLÍTVA.\n\n(A Windows Update szolgáltatást újraindítottuk, így az 'örökké tartó' keresés megszűnik és megtalálja a frissítéseket!)")
             self.check_wu_status()
         except PermissionError:
             messagebox.showerror("Hiba", "Nincs jogosultság a Registry írásához. Futtasd Rendszergazdaként!")
