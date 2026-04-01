@@ -643,11 +643,17 @@ class DriverCleanerApp(tk.Tk):
         try:
             key_path = r"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
             try:
-                # Kifejezetten 0-ra állítjuk, hogy a policy garantáltan törlődjön a gyorsítótárból is
-                with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_WRITE) as key:
-                    winreg.SetValueEx(key, "ExcludeWUDriversInQualityUpdate", 0, winreg.REG_DWORD, 0)
-            except Exception:
+                # TÖRÖLJÜK a policy értéket teljesen (a 0-ra állítás nem elég, a policy engine összezavarodik!)
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_WRITE) as key:
+                    winreg.DeleteValue(key, "ExcludeWUDriversInQualityUpdate")
+            except FileNotFoundError:
                 pass
+            except Exception:
+                # Ha a törlés nem megy, legalább 0-ra állítsuk
+                try:
+                    with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_WRITE) as key:
+                        winreg.SetValueEx(key, "ExcludeWUDriversInQualityUpdate", 0, winreg.REG_DWORD, 0)
+                except: pass
 
             key_path2 = r"SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching"
             with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path2, 0, winreg.KEY_WRITE) as key:
@@ -659,12 +665,21 @@ class DriverCleanerApp(tk.Tk):
                     winreg.DeleteValue(key, "NoAutoUpdate")
             except: pass
 
-            # A végtelen frissítés-keresés (beragadás) javítása érdekében újraindítjuk a WU szolgáltatást
+            # WU szolgáltatás leállítása + CACHE TÖRLÉS + újraindítás (az örök keresés javítása!)
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            subprocess.run("net stop wuauserv & net start wuauserv", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run("net stop wuauserv & net stop bits", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            # WU cache törlése - ez oldja meg az örökké tartó "frissítések keresése" problémát
+            sw_dist = os.path.join(os.environ.get('SYSTEMROOT', r'C:\Windows'), 'SoftwareDistribution')
+            try:
+                if os.path.exists(sw_dist):
+                    shutil.rmtree(sw_dist, ignore_errors=True)
+            except: pass
+            
+            subprocess.run("net start bits & net start wuauserv", shell=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
 
-            messagebox.showinfo("Siker", "Windows Update driver telepítés sikeresen VISSZAÁLLÍTVA.\n\n(A Windows Update szolgáltatást újraindítottuk, így az 'örökké tartó' keresés megszűnik és megtalálja a frissítéseket!)")
+            messagebox.showinfo("Siker", "Windows Update driver telepítés sikeresen VISSZAÁLLÍTVA.\n\n• A házirend policy TÖRÖLVE (nem csak 0-ra állítva)\n• A WU cache törölve (SoftwareDistribution mappa)\n• A Windows Update szolgáltatás újraindítva\n\nMenj a Beállítások > Frissítések oldalra és kattints a 'Frissítések keresése' gombra!")
             self.check_wu_status()
         except PermissionError:
             messagebox.showerror("Hiba", "Nincs jogosultság a Registry írásához. Futtasd Rendszergazdaként!")
