@@ -520,6 +520,10 @@ class DriverCleanerApp(tk.Tk):
             shutil.rmtree(mount_dir, ignore_errors=True)
         os.makedirs(mount_dir, exist_ok=True)
         
+        # Kiszedjük a fájl utakat és gondoskodunk a szóköz/backslash hibákról cmd paraméternek
+        wim_path = os.path.normpath(wim_path).replace("\\", "/")
+        mount_dir = os.path.normpath(mount_dir).replace("\\", "/")
+        
         prog_win = tk.Toplevel(self)
         prog_win.title("WIM csatolás folyamatban...")
         prog_win.geometry("550x180")
@@ -544,8 +548,9 @@ class DriverCleanerApp(tk.Tk):
                 # 1. Mount image
                 self.after(0, lambda: status_lbl.config(text="1/3: Képfájl csatolása a Temp mappába (Türelem, 4-5 perc is lehet!)..."))
                 logging.info(f"WIM mountolasa: {wim_path}")
-                mount_cmd = ['dism', '/Mount-Image', f'/ImageFile:{wim_path}', '/Index:1', f'/MountDir:{mount_dir}', '/ReadOnly']
-                res = subprocess.run(mount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                # A shell=True és string interpoláció elkerüli, hogy a python lista-konvertáló hibás helyre tegye az idézőjeleket a DISM-nek
+                mount_cmd = f'dism /Mount-Image "/ImageFile:{wim_path}" /Index:1 "/MountDir:{mount_dir}" /ReadOnly'
+                res = subprocess.run(mount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
                 if res.returncode != 0:
                     raise Exception(f"DISM Mount Hiba: {res.stdout}")
                 
@@ -554,16 +559,17 @@ class DriverCleanerApp(tk.Tk):
                 driverstore_path = os.path.join(mount_dir, "Windows", "System32", "DriverStore", "FileRepository")
                 logging.info(f"DriverStore masolasa innen: {driverstore_path}")
                 if os.path.exists(driverstore_path):
-                    robo_cmd = ['robocopy', driverstore_path, target_folder, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/nc', '/ns', '/np']
-                    subprocess.run(robo_cmd, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                    target_cmd = os.path.normpath(target_folder).replace("\\", "/")
+                    robo_cmd = f'robocopy "{driverstore_path}" "{target_cmd}" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /nc /ns /np'
+                    subprocess.run(robo_cmd, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
                 else:
                     raise Exception("A FileRepository (gyári driver mappa) nem található a csatolt WIM fájlban!")
                 
                 # 3. Biztonságos Unmount
                 self.after(0, lambda: status_lbl.config(text="3/3: WIM leválasztása (Takarítás)..."))
                 logging.info("WIM unmountolasa...")
-                unmount_cmd = ['dism', '/Unmount-Image', f'/MountDir:{mount_dir}', '/Discard']
-                subprocess.run(unmount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                unmount_cmd = f'dism /Unmount-Image "/MountDir:{mount_dir}" /Discard'
+                subprocess.run(unmount_cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
                 
                 try:
                     shutil.rmtree(mount_dir, ignore_errors=True)
@@ -571,12 +577,13 @@ class DriverCleanerApp(tk.Tk):
 
                 def finish():
                     if prog_win.winfo_exists(): prog_win.destroy()
-                    messagebox.showinfo("Kinyerés Kész", f"A TISZTA gyári driverek (alap USB, PS/2 Billentyűzet, Alaplapi chipek, Generic Touchpad) sikeresen kimentve ide:\n{target_folder}\n\nKövetkező lépés:\nKattints a 'Lementett Driverek Visszaállítása' gombra -> 'NEM' (Offline mód), és válaszd ki a halott D:\\ meghajtót, forrásnak pedig add meg ezt az új mappát!")
+                    messagebox.showinfo("Kinyerés Kész", f"A TISZTA gyári driverek (alap USB, PS/2 Billentyűzet, Alaplapi chipek, Generic Touchpad) sikeresen kimentve ide:\n{target_folder}\n\nKövetkező lépés:\nKattints a 'Lementett Driverek Visszaállítása' gombra -> 'NEM' (Offline mód), és válaszd ki a halott gép meghajtóját, forrásnak pedig add meg ezt az új mappát!")
                 self.after(0, finish)
 
             except Exception as e:
                 logging.error(f"Hiba WIM kinyeresekor: {e}")
-                subprocess.run(['dism', '/Unmount-Image', f'/MountDir:{mount_dir}', '/Discard'], capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                err_unmount = f'dism /Unmount-Image "/MountDir:{mount_dir}" /Discard'
+                subprocess.run(err_unmount, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
                 try:
                     shutil.rmtree(mount_dir, ignore_errors=True)
                 except: pass
