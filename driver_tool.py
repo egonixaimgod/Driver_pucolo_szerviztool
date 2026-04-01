@@ -30,7 +30,8 @@ class DriverCleanerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Windows Driver Szerviz & Tisztító Eszköz")
-        self.geometry("1100x700")
+        self.geometry("780x560")
+        self.minsize(600, 450)
 
         # Let's apply a more modern style if possible
         style = ttk.Style(self)
