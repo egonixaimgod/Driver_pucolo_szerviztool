@@ -1014,8 +1014,32 @@ class DriverCleanerApp(tk.Tk):
 
                 if is_inbox_restore:
                     write_log("Gyári Windows (inbox) driverek felismerve!")
-                    write_log("A DISM offline /Add-Driver nem képes inbox drivereket telepíteni => Boot Service módszer aktiválva.")
-                    write_log("A driverek a célrendszerre másolódnak, és az ELSŐ BOOTOLÁSKOR automatikusan telepítődnek online PnP-vel.")
+                    write_log("A DISM offline nem képes inbox drivereket telepíteni => Közvetlen FileRepository másolás + Boot Service aktiválva.")
+                    
+                    # 1. LÉPÉS: Közvetlen másolás a DriverStore\FileRepository alá (azonnali hatás bootoláskor)
+                    target_filerepo = os.path.join(norm_target, "Windows", "System32", "DriverStore", "FileRepository")
+                    write_log(f"Fájlok másolása közvetlenül a FileRepository-ba: {norm_source} -> {target_filerepo}")
+                    import shutil
+                    copied_count = 0
+                    error_count = 0
+                    try:
+                        os.makedirs(target_filerepo, exist_ok=True)
+                        for item in os.listdir(norm_source):
+                            src_item = os.path.join(norm_source, item)
+                            dst_item = os.path.join(target_filerepo, item)
+                            try:
+                                if os.path.isdir(src_item):
+                                    shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+                                else:
+                                    shutil.copy2(src_item, dst_item)
+                                copied_count += 1
+                            except Exception as ce:
+                                error_count += 1
+                                write_log(f"  Figyelem: {item} másolási hiba: {ce}")
+                        write_log(f"FileRepository másolás KÉSZ! Sikeres: {copied_count}, Hibás: {error_count}")
+                    except Exception as fe:
+                        write_log(f"HIBA a FileRepository másolás során: {fe}")
+                    
                 elif online:
                     cmd = ['pnputil', '/add-driver', f"{norm_source}\\*.inf", '/subdirs', '/install']
                     write_log(f"Végrehajtandó parancssor: {' '.join(cmd)}")
