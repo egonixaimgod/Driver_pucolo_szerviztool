@@ -114,6 +114,8 @@ class DriverCleanerApp(tk.Tk):
         btn_wu = ttk.Button(sidebar_frame, text="🔄 Windows Update", command=lambda: self.switch_view("wu"))
         btn_wu.pack(fill=tk.X, padx=10, pady=5)
 
+        btn_hw = ttk.Button(sidebar_frame, text="🖥️ Hardver Infó & Telepítés", command=lambda: self.switch_view("hw"))
+        btn_hw.pack(fill=tk.X, padx=10, pady=5)
 
         # 4. Content Area on the right
         self.content_frame = tk.Frame(main_body, bg="#FFFFFF")
@@ -123,6 +125,7 @@ class DriverCleanerApp(tk.Tk):
         self.driver_view = tk.Frame(self.content_frame, bg="#FFFFFF")
         self.backup_view = tk.Frame(self.content_frame, bg="#FFFFFF")
         self.wu_view = tk.Frame(self.content_frame, bg="#FFFFFF")
+        self.hw_view = tk.Frame(self.content_frame, bg="#FFFFFF")
 
         # variables:
         self.list_all_var = tk.BooleanVar(value=False)
@@ -230,6 +233,41 @@ class DriverCleanerApp(tk.Tk):
         wu_frame.columnconfigure(0, weight=1)
         wu_frame.columnconfigure(1, weight=1)
 
+        # -----------------------------
+        # HARDWARE INFO & DRIVERS VIEW CONTENT
+        # -----------------------------
+        hw_frame = ttk.LabelFrame(self.hw_view, text="Rendszer és Hardver Információk", padding=10)
+        hw_frame.pack(fill=tk.BOTH, expand=True, pady=0)
+
+        top_hw_frame = tk.Frame(hw_frame, bg="#FFFFFF")
+        top_hw_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.sys_info_lbl = ttk.Label(top_hw_frame, text="Rendszer információk betöltése...", font=("Segoe UI", 11, "bold"), foreground="#003366")
+        self.sys_info_lbl.pack(side=tk.LEFT, anchor="w")
+
+        hardware_btn_frame = tk.Frame(hw_frame, bg="#FFFFFF")
+        hardware_btn_frame.pack(fill=tk.X, pady=(0, 10))
+
+        get_hw_btn = ttk.Button(hardware_btn_frame, text="🔍 Hardverek Scannelése", command=self.load_hardware_info)
+        get_hw_btn.grid(row=0, column=0, padx=5, pady=5)
+
+        self.install_hw_btn = ttk.Button(hardware_btn_frame, text="🚀 WU Driverek Letöltése és Telepítése", command=self.install_wu_drivers, state=tk.DISABLED)
+        self.install_hw_btn.grid(row=0, column=1, padx=5, pady=5)
+
+        self.hw_tree = ttk.Treeview(hw_frame, columns=("Type", "Name", "ID", "DriverVer"), show="headings", height=12)
+        self.hw_tree.heading("Type", text="Kategória")
+        self.hw_tree.heading("Name", text="Eszköz Neve / Típus")
+        self.hw_tree.heading("ID", text="Hardver Azonosító (HWID)")
+        self.hw_tree.heading("DriverVer", text="Aktuális Driver")
+        self.hw_tree.column("Type", width=120, anchor="w")
+        self.hw_tree.column("Name", width=250, anchor="w")
+        self.hw_tree.column("ID", width=200, anchor="w")
+        self.hw_tree.column("DriverVer", width=150, anchor="w")
+
+        hw_scrollbar = ttk.Scrollbar(hw_frame, orient=tk.VERTICAL, command=self.hw_tree.yview)
+        self.hw_tree.configure(yscrollcommand=hw_scrollbar.set)
+        hw_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.hw_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Show drivers by default
         self.driver_view.pack(fill=tk.BOTH, expand=True)
@@ -238,6 +276,7 @@ class DriverCleanerApp(tk.Tk):
         self.driver_view.pack_forget()
         self.backup_view.pack_forget()
         self.wu_view.pack_forget()
+        self.hw_view.pack_forget()
         
         if view_name == "drivers":
             self.driver_view.pack(fill=tk.BOTH, expand=True)
@@ -247,6 +286,9 @@ class DriverCleanerApp(tk.Tk):
         elif view_name == "wu":
             self.wu_view.pack(fill=tk.BOTH, expand=True)
             self.check_wu_status()
+        elif view_name == "hw":
+            self.hw_view.pack(fill=tk.BOTH, expand=True)
+            self.load_hardware_info()
 
     def change_target_os(self):
         d = filedialog.askdirectory(title="Válaszd ki a halott Windows meghajtóját (pl. C:\\ vagy D:\\, amin a Windows mappa van!)")
@@ -405,6 +447,718 @@ class DriverCleanerApp(tk.Tk):
         except Exception as e:
             logging.error(f"Hiba a gyári driver lekérdezésben (Powershell Get-WindowsDriver): {e}")
             return []
+
+    def _search_wu_api(self):
+        """Windows Update COM API-n keresztül keres elérhető driver frissítéseket.
+        Visszaad egy listát dict-ekkel, vagy üres listát hiba esetén."""
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            ps_cmd = r"""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {
+    $Session = New-Object -ComObject Microsoft.Update.Session
+    $Searcher = $Session.CreateUpdateSearcher()
+    try {
+        $SM = New-Object -ComObject Microsoft.Update.ServiceManager
+        $SM.AddService2("7971f918-a847-4430-9279-4a52d1efe18d", 7, "") | Out-Null
+    } catch {}
+    $Searcher.ServerSelection = 3
+    $Searcher.ServiceID = "7971f918-a847-4430-9279-4a52d1efe18d"
+    $Result = $Searcher.Search("IsInstalled=0 and Type='Driver'")
+    $updates = @()
+    foreach ($U in $Result.Updates) {
+        $updates += [PSCustomObject]@{
+            Title = $U.Title
+            DriverModel = $U.DriverModel
+            HardwareID = $U.DriverHardwareID
+            DriverClass = $U.DriverClass
+            DriverProvider = $U.DriverProvider
+            UpdateID = $U.Identity.UpdateID
+            Size = $U.MaxDownloadSize
+        }
+    }
+    if ($updates.Count -eq 0) { Write-Output "[]" }
+    else { $updates | ConvertTo-Json -Depth 2 -Compress }
+} catch {
+    Write-Error $_.Exception.Message
+    Write-Output "[]"
+}
+"""
+            logging.info("WU COM API PowerShell keresés indítása...")
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True, encoding='utf-8', errors='replace',
+                startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=300  # 5 perc timeout
+            )
+            logging.info(f"WU COM API PowerShell vége. ReturnCode: {res.returncode}, stdout len: {len(res.stdout)}")
+            if res.stderr:
+                logging.warning(f"WU COM API stderr: {res.stderr[:500]}")
+            
+            out = res.stdout.strip()
+            if out:
+                import json
+                data = json.loads(out)
+                if isinstance(data, dict):
+                    data = [data]
+                logging.info(f"WU COM API talált {len(data)} db frissítést")
+                return data if isinstance(data, list) else []
+        except subprocess.TimeoutExpired:
+            logging.error("WU COM API keresés timeout (300s)")
+        except Exception as e:
+            logging.error(f"WU COM API keresés hiba: {e}")
+        return []
+
+    def load_hardware_info(self):
+        if hasattr(self, '_hw_scanning') and self._hw_scanning:
+            return
+        self._hw_scanning = True
+        
+        self.sys_info_lbl.config(text="🔍 Hardverek ellenőrzése folyamatban... Kérlek várj!")
+        for item in self.hw_tree.get_children():
+            self.hw_tree.delete(item)
+
+        def worker():
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            sys_info_text = "Ismeretlen PC / Laptop"
+            
+            try:
+                ps_cmd = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject Win32_ComputerSystem | Select-Object Manufacturer, Model, PCSystemType | ConvertTo-Json"
+                res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, encoding='utf-8', startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                if res.stdout.strip():
+                    import json
+                    try:
+                        data = json.loads(res.stdout.strip())
+                        man = data.get("Manufacturer", "").strip()
+                        mod = data.get("Model", "").strip()
+                        pct = data.get("PCSystemType", -1)
+                        is_laptop = (pct == 2)
+                        prefix = "💻 Laptop" if is_laptop else "🖥️ Asztali (Desktop)"
+                        sys_info_text = f"{prefix} | {man} - {mod}"
+                    except json.JSONDecodeError:
+                        pass
+            except Exception:
+                pass
+            
+            self.after(0, lambda html_t=sys_info_text: self.sys_info_lbl.config(text=html_t))
+
+            def get_wmi_devices(wmi_class, filter_cond="", name_prop="Name", id_prop="PNPDeviceID"):
+                cmd = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject {wmi_class}"
+                if filter_cond:
+                    cmd += f" | Where-Object {{ {filter_cond} }}"
+                cmd += f" | Select-Object {name_prop}, {id_prop} | ConvertTo-Json -Compress"
+                try:
+                    res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, encoding='utf-8', startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                    out = res.stdout.strip()
+                    if not out: return []
+                    import json
+                    try:
+                        data = json.loads(out)
+                        if isinstance(data, dict): return [data]
+                        return data if isinstance(data, list) else []
+                    except: return []
+                except: return []
+
+            self.install_hw_btn.config(state=tk.DISABLED)
+            self.hw_updates_pool = []
+
+            # HWID extrahálás (VEN_XXXX&DEV_YYYY, VID_XXXX&PID_YYYY, ACPI\XXXX)
+            def extract_hwid(pnp_id):
+                if not pnp_id: return None
+                m_pci = re.search(r'(VEN_[0-9A-F]+&DEV_[0-9A-F]+)', pnp_id, re.I)
+                if m_pci: return m_pci.group(1)
+                m_usb = re.search(r'(VID_[0-9A-F]+&PID_[0-9A-F]+)', pnp_id, re.I)
+                if m_usb: return m_usb.group(1)
+                m_acpi = re.search(r'(ACPI\\[A-Z0-9_]+)', pnp_id, re.I)
+                if m_acpi: return m_acpi.group(1)
+                return None
+
+            devices_to_check = []
+
+            # 1. Alaplap infó tájékoztató jelleggel
+            mb_data = get_wmi_devices("Win32_BaseBoard", "", "Manufacturer", "Product")
+            for d in mb_data:
+                name = f"{d.get('Manufacturer','')} {d.get('Product','')}"
+                self.after(0, lambda n=name: self.hw_tree.insert("", tk.END, values=("⚙️ Chipset / Alaplap", n, "Alaplapi integrált", "Nem frissíthető (Csak info)")))
+
+            # 2. MINDEN Plug & Play eszköz lekérdezése, aminek van értelmezhető HWID-ja
+            ignored_classes = ['Volume', 'VolumeSnapshot', 'DiskDrive', 'CDROM', 'Monitor', 'Battery', 'SoftwareDevice', 'Processor', 'Computer', 'LegacyDriver', 'Endpoint', 'AudioEndpoint']
+            
+            # Kicsit bolondbiztosabb lekérdezés: minden eszközt lehúzunk, pythonban szűrjük a $null miatti bugok helyett
+            def pull_pnp():
+                self.after(0, lambda: self.sys_info_lbl.config(text=f"{sys_info_text} | ⏳ Hardverlista letöltése a Windowstól... (Várj)"))
+                try:
+                    logging.info("Indul a powershell lekérdezés: Get-WmiObject Win32_PnPEntity")
+                    cmd_pnp = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject Win32_PnPEntity | Select-Object Name, PNPClass, PNPDeviceID | ConvertTo-Json -Compress"
+                    res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd_pnp], capture_output=True, encoding='utf-8', errors='replace', startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                    
+                    logging.info(f"Powershell lekérdezés vége! ReturnCode: {res.returncode}")
+                    if res.returncode != 0:
+                        logging.error(f"PNP Powershell Hiba kód={res.returncode}. STDERR kim: {res.stderr}\nSTDOUT kim: {res.stdout[:300]}")
+                    
+                    if res.stdout:
+                        import json
+                        out = json.loads(res.stdout)
+                        logging.info(f"JSON decodolas sikeres! {len(out) if isinstance(out, list) else 1} elem parseolva.")
+                        return out if isinstance(out, list) else [out]
+                    else:
+                        logging.error("NINCS STDOUT (Üres a JSON). Valami megfogta a PowerShellt.")
+                except Exception as ex:
+                    import traceback
+                    logging.error(f"PNP Query Váratlan Python Hiba:\n{traceback.format_exc()}")
+                return []
+            
+            pnp_data = pull_pnp()
+            logging.info(f"PnP feldolgozando elemek szama: {len(pnp_data)}")
+            
+            seen_hwids = set()
+            for d in pnp_data:
+                n = d.get("Name", "Ismeretlen Eszköz")
+                pid = d.get("PNPDeviceID", "")
+                pclass = d.get("PNPClass", "") or ""
+                
+                # Kiszűrjük a virtuális, szoftveres és irreleváns cuccokat
+                if not pid or "virtual" in n.lower() or "pseudo" in n.lower() or "vmware" in n.lower() or "root\\" in pid.lower(): continue
+                if pclass in ignored_classes: continue
+                
+                hwid_clean = extract_hwid(pid)
+                if not hwid_clean or hwid_clean in seen_hwids: continue
+                
+                seen_hwids.add(hwid_clean)
+                
+                # Kategória finomhangolása
+                if pclass == "Display": cat = "🎮 Videókártya (VGA)"
+                elif pclass == "Media": cat = "🎵 Hangkártya (Audio)"
+                elif pclass == "Net": cat = "🌐 Hálózat (LAN/Wi-Fi)"
+                elif pclass == "Bluetooth": cat = "🔵 Bluetooth"
+                elif pclass == "System": cat = "⚙️ Rendszereszköz"
+                elif pclass == "USB": cat = "🔌 USB Vezérlő"
+                elif pclass == "Camera" or pclass == "Image": cat = "📷 Webkamera"
+                elif pclass == "Mouse" or pclass == "Keyboard" or pclass == "HIDClass": cat = "🖱️ Periféria"
+                elif pclass == "Biometric": cat = "🔒 Ujjlenyomat / Biometria"
+                else: cat = f"🔧 Egyéb ({pclass})"
+                
+                devices_to_check.append({"cat": cat, "name": n, "id": hwid_clean, "pnp_id": pid})
+
+            # A megkeresett eszkozoket eloszor regisztraljuk a fofonalon a Treeview-ba, majd WU API-val keressuk a frissiteseket
+            def start_wu_checks():
+                for dev in devices_to_check:
+                    dev['iid'] = self.hw_tree.insert("", tk.END, values=(dev['cat'], dev['name'], dev['id'], "🔄 Keresés a Windows Update-en..."))
+                
+                def wu_search_thread():
+                    total_devs = len(devices_to_check)
+                    self.after(0, lambda: self.sys_info_lbl.config(
+                        text=f"{sys_info_text} | ⏳ Windows Update szerveren keresés... (ez 1-3 percig tarthat, várj türelemmel!)"))
+                    
+                    self.hw_updates_pool = []
+                    self.wu_api_mode = True
+                    
+                    # --- 1. FÁZIS: WU COM API keresés (megbízható, OS-kompatibilis találatok) ---
+                    logging.info("WU COM API driver keresés indítása...")
+                    wu_results = self._search_wu_api()
+                    
+                    matched_hwids = set()
+                    if wu_results:
+                        logging.info(f"WU COM API {len(wu_results)} db elérhető driver frissítést talált!")
+                        for wu in wu_results:
+                            wu_hwid_raw = (wu.get('HardwareID') or '').upper()
+                            wu_title = wu.get('Title', '')
+                            wu_model = wu.get('DriverModel', '')
+                            
+                            # HWID egyeztetés a PnP eszközökkel
+                            for dev in devices_to_check:
+                                if dev['id'] in matched_hwids:
+                                    continue
+                                dev_hwid = dev['id'].upper()
+                                dev_pnp = dev.get('pnp_id', '').upper()
+                                
+                                # Ellenőrizzük, hogy a WU HWID illeszkedik-e az eszközhöz
+                                if (dev_hwid and dev_hwid in wu_hwid_raw) or \
+                                   (wu_hwid_raw and wu_hwid_raw in dev_pnp):
+                                    matched_hwids.add(dev['id'])
+                                    self.hw_updates_pool.append({
+                                        "name": dev['name'],
+                                        "cat": dev['cat'],
+                                        "hwid": dev['id'],
+                                        "wu_title": wu_title,
+                                        "pnp_id": dev.get('pnp_id', '')
+                                    })
+                                    iid = dev['iid']
+                                    c, n, h = dev['cat'], dev['name'], dev['id']
+                                    title_short = wu_title[:40] + '...' if len(wu_title) > 40 else wu_title
+                                    self.after(0, lambda _iid=iid, _c=c, _n=n, _h=h, _t=title_short:
+                                        self.hw_tree.item(_iid, values=(_c, _n, _h, f"📦 {_t}")))
+                                    break
+                        
+                        # WU-hoz nem illeszthető frissítéseket is hozzáadjuk (pl. más eszközosztály)
+                        for wu in wu_results:
+                            wu_hwid_raw = (wu.get('HardwareID') or '').upper()
+                            already_matched = False
+                            for dev in devices_to_check:
+                                if dev['id'].upper() in wu_hwid_raw or wu_hwid_raw in dev.get('pnp_id', '').upper():
+                                    already_matched = True
+                                    break
+                            if not already_matched:
+                                wu_title = wu.get('Title', 'Ismeretlen WU driver')
+                                self.hw_updates_pool.append({
+                                    "name": wu.get('DriverModel', wu_title),
+                                    "cat": "🔄 WU Driver",
+                                    "hwid": wu_hwid_raw,
+                                    "wu_title": wu_title,
+                                    "pnp_id": ''
+                                })
+                        
+                        if self.hw_updates_pool:
+                            self.after(0, lambda: self.install_hw_btn.config(state=tk.NORMAL))
+                    
+                    # --- 2. FÁZIS: Ha WU API nem talált semmit, fallback a MS Catalog webes keresésre ---
+                    if not self.hw_updates_pool:
+                        self.wu_api_mode = False
+                        logging.info("WU COM API nem talált frissítést, fallback: MS Update Catalog webes keresés...")
+                        self.after(0, lambda: self.sys_info_lbl.config(
+                            text=f"{sys_info_text} | 🔎 WU API üres, MS katalógus ellenőrzés ({total_devs} eszköz)..."))
+                        
+                        import urllib.request, urllib.parse, ssl
+                        ssl_ctx = ssl._create_unverified_context()
+                        
+                        checked_devs = 0
+                        lock = threading.Lock()
+                        
+                        def check_catalog(item_dict):
+                            nonlocal checked_devs
+                            cat = item_dict['cat']
+                            name = item_dict['name']
+                            hwid = item_dict['id']
+                            pnp_id = item_dict.get('pnp_id', '')
+                            item_iid = item_dict.get('iid')
+                            try:
+                                url = 'https://www.catalog.update.microsoft.com/Search.aspx?q=' + urllib.parse.quote(hwid)
+                                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                                html = urllib.request.urlopen(req, context=ssl_ctx, timeout=30).read().decode('utf-8')
+                                match_ids = re.findall(r"id=['\"]([a-fA-F0-9\-]+)_link['\"]", html)
+                                
+                                best_id = match_ids[0] if match_ids else None
+                                
+                                if best_id:
+                                    dl_url = f'https://www.catalog.update.microsoft.com/DownloadDialog.aspx?updateIDs=[{{"size":0,"fileUrl":"","lazyId":"{best_id}","updateId":"{best_id}"}}]'
+                                    dl_req = urllib.request.Request(dl_url, headers={'User-Agent': 'Mozilla/5.0'})
+                                    dl_html = urllib.request.urlopen(dl_req, context=ssl_ctx, timeout=30).read().decode('utf-8')
+                                    cab_link = re.search(r'downloadInformation\[0\]\.files\[0\]\.url \s*=\s*[\"\']([^\"\']+)[\"\']', dl_html)
+                                    
+                                    if cab_link:
+                                        dl_target = cab_link.group(1)
+                                        logging.info(f"Katalógus találat: {name} (HWID={hwid}). Link: {dl_target}")
+                                        self.hw_updates_pool.append({"name": name, "cat": cat, "hwid": hwid, "url": dl_target, "pnp_id": pnp_id})
+                                        self.after(0, lambda _iid=item_iid, _c=cat, _n=name, _h=hwid:
+                                            self.hw_tree.item(_iid, values=(_c, _n, _h, "📦 Letölthető verzió elérhető!")))
+                                        self.after(0, lambda: self.install_hw_btn.config(state=tk.NORMAL))
+                                        return
+                                self.after(0, lambda _iid=item_iid, _c=cat, _n=name, _h=hwid:
+                                    self.hw_tree.item(_iid, values=(_c, _n, _h, "✅ Legfrissebb")))
+                            except Exception as e:
+                                logging.error(f"Katalógus hiba ({name} / HWID={hwid}): {e}")
+                                self.after(0, lambda _iid=item_iid, _c=cat, _n=name, _h=hwid, _e=str(e):
+                                    self.hw_tree.item(_iid, values=(_c, _n, _h, f"⚠ Hiba: {_e[:30]}")))
+                            finally:
+                                with lock:
+                                    checked_devs += 1
+                                    self.after(0, lambda _c=checked_devs:
+                                        self.sys_info_lbl.config(text=f"{sys_info_text} | 🔎 Katalógus vizsgálat: {_c} / {total_devs}"))
+                        
+                        import queue
+                        q = queue.Queue()
+                        for dev in devices_to_check:
+                            q.put(dev)
+                        
+                        def catalog_worker():
+                            while not q.empty():
+                                try:
+                                    dev = q.get_nowait()
+                                except:
+                                    break
+                                check_catalog(dev)
+                                q.task_done()
+                        
+                        cat_threads = []
+                        for _ in range(5):  # 5 szál (kevesebb, hogy ne blokkoljuk a szervert)
+                            t = threading.Thread(target=catalog_worker, daemon=True)
+                            t.start()
+                            cat_threads.append(t)
+                        for t in cat_threads:
+                            t.join(timeout=120)  # Max 2 perc várakozás szálanként
+                    
+                    # --- 3. FÁZIS: Nem illeszkedő eszközök megjelölése ---
+                    for dev in devices_to_check:
+                        if dev['id'] not in matched_hwids:
+                            iid = dev['iid']
+                            c, n, h = dev['cat'], dev['name'], dev['id']
+                            # Csak akkor jelöljük zöldre ha a WU API módban vagyunk (katalógus mód saját maga kezeli)
+                            if self.wu_api_mode:
+                                self.after(0, lambda _iid=iid, _c=c, _n=n, _h=h:
+                                    self.hw_tree.item(_iid, values=(_c, _n, _h, "✅ Legfrissebb")))
+                    
+                    found = len(self.hw_updates_pool)
+                    self.after(0, lambda: setattr(self, '_hw_scanning', False))
+                    mode_txt = "WU API" if self.wu_api_mode else "Katalógus"
+                    self.after(0, lambda _txt=sys_info_text, _f=found, _t=total_devs, _m=mode_txt:
+                        self.sys_info_lbl.config(text=f"{_txt} | ✅ Kész ({_m})! {_f} frissítés elérhető ({_t} eszköz vizsgálva)"))
+                
+                threading.Thread(target=wu_search_thread, daemon=True).start()
+            
+            # Switch back to main thread to populate the treeview and then spawn threads
+            self.after(0, start_wu_checks)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def install_wu_drivers(self):
+        if not hasattr(self, 'hw_updates_pool') or not self.hw_updates_pool:
+            messagebox.showinfo("Nincs frissítés",
+                "Nem található telepíthető driver frissítés.\n\n"
+                "Lehetséges okok:\n"
+                "• Minden driver naprakész a rendszeren\n"
+                "• A Windows Update szerver nem érhető el\n"
+                "• Próbáld meg újra a 'Hardverek Scannelése' gombbal")
+            return
+        
+        # WU API mód: a Windows Update COM API-n keresztül telepítünk (megbízhatóbb)
+        if hasattr(self, 'wu_api_mode') and self.wu_api_mode:
+            self._install_via_wu_api()
+        else:
+            self._install_via_catalog()
+
+    def _install_via_wu_api(self):
+        """Windows Update COM API-n keresztüli letöltés és telepítés."""
+        prog_win = tk.Toplevel(self)
+        prog_win.title("WU Driver Telepítés (Windows Update API)")
+        prog_win.geometry("650x400")
+        prog_win.transient(self)
+        prog_win.grab_set()
+
+        lbl = ttk.Label(prog_win, text=f"{len(self.hw_updates_pool)} db driver frissítés letöltése és telepítése\nWindows Update COM API-n keresztül...", justify=tk.CENTER)
+        lbl.pack(pady=5)
+
+        progress = ttk.Progressbar(prog_win, orient=tk.HORIZONTAL, length=550, mode='indeterminate')
+        progress.pack(pady=5)
+        progress.start(15)
+
+        status_lbl = ttk.Label(prog_win, text="Windows Update keresés és letöltés inicializálása...", font=("Segoe UI", 9))
+        status_lbl.pack(pady=5)
+
+        text_frame = tk.Frame(prog_win)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+        log_text = tk.Text(text_frame, height=12, state=tk.DISABLED, bg="#F3F3F3", font=("Consolas", 8))
+        log_scroll = ttk.Scrollbar(text_frame, command=log_text.yview)
+        log_text.configure(yscrollcommand=log_scroll.set)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def append_log(msg):
+            logging.info(f"WU_API_INSTALL: {msg}")
+            log_text.config(state=tk.NORMAL)
+            log_text.insert(tk.END, msg + "\n")
+            log_text.see(tk.END)
+            log_text.config(state=tk.DISABLED)
+
+        def worker():
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            ps_script = r"""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {
+    Write-Output "INIT: Windows Update Session létrehozása..."
+    $Session = New-Object -ComObject Microsoft.Update.Session
+    $Searcher = $Session.CreateUpdateSearcher()
+    
+    try {
+        $SM = New-Object -ComObject Microsoft.Update.ServiceManager
+        $SM.AddService2("7971f918-a847-4430-9279-4a52d1efe18d", 7, "") | Out-Null
+    } catch {}
+    $Searcher.ServerSelection = 3
+    $Searcher.ServiceID = "7971f918-a847-4430-9279-4a52d1efe18d"
+    
+    Write-Output "SEARCH: Driver frissítések keresése..."
+    $Result = $Searcher.Search("IsInstalled=0 and Type='Driver'")
+    
+    if ($Result.Updates.Count -eq 0) {
+        Write-Output "EMPTY: Nem található elérhető driver frissítés."
+        exit
+    }
+    
+    $ToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
+    foreach ($U in $Result.Updates) {
+        if (-not $U.EulaAccepted) { $U.AcceptEula() }
+        $ToInstall.Add($U) | Out-Null
+        Write-Output "FOUND: $($U.Title) [$($U.DriverModel)]"
+    }
+    
+    Write-Output "DOWNLOAD: $($ToInstall.Count) driver frissítés letöltése..."
+    $Downloader = $Session.CreateUpdateDownloader()
+    $Downloader.Updates = $ToInstall
+    $DlResult = $Downloader.Download()
+    Write-Output "DL_RESULT: ResultCode=$($DlResult.ResultCode)"
+    
+    if ($DlResult.ResultCode -ne 2 -and $DlResult.ResultCode -ne 3) {
+        Write-Output "DL_FAIL: Letöltés sikertelen! Kód: $($DlResult.ResultCode)"
+        for ($i = 0; $i -lt $ToInstall.Count; $i++) {
+            $rc = $DlResult.GetUpdateResult($i).ResultCode
+            if ($rc -ne 2) {
+                Write-Output "DL_ITEM_FAIL: $($ToInstall.Item($i).Title) => Kód: $rc"
+            }
+        }
+    }
+    
+    Write-Output "INSTALL: $($ToInstall.Count) driver frissítés telepítése..."
+    $Installer = $Session.CreateUpdateInstaller()
+    $Installer.Updates = $ToInstall
+    $InstResult = $Installer.Install()
+    
+    $successCount = 0
+    $failCount = 0
+    for ($i = 0; $i -lt $ToInstall.Count; $i++) {
+        $rc = $InstResult.GetUpdateResult($i).ResultCode
+        $title = $ToInstall.Item($i).Title
+        switch ($rc) {
+            2 { Write-Output "OK: [SIKER] $title"; $successCount++ }
+            3 { Write-Output "OK: [SIKER/FIGYELEM] $title"; $successCount++ }
+            4 { Write-Output "FAIL: [HIBA] $title"; $failCount++ }
+            5 { Write-Output "FAIL: [MEGSZAKÍTVA] $title"; $failCount++ }
+            default { Write-Output "FAIL: [ISMERETLEN=$rc] $title"; $failCount++ }
+        }
+    }
+    
+    Write-Output "DONE: Sikeres=$successCount, Sikertelen=$failCount"
+    
+} catch {
+    Write-Output "ERROR: $($_.Exception.Message)"
+}
+"""
+            self.after(0, lambda: append_log("Windows Update COM API telepítés indítása..."))
+
+            process = subprocess.Popen(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace',
+                startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            success_count = 0
+            fail_count = 0
+
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line.startswith("INIT:") or line.startswith("SEARCH:"):
+                    self.after(0, lambda m=line.split(":", 1)[1].strip(): status_lbl.config(text=m))
+                    self.after(0, lambda m=line: append_log(m))
+                elif line.startswith("FOUND:"):
+                    self.after(0, lambda m=f"  📦 {line[6:].strip()}": append_log(m))
+                elif line.startswith("DOWNLOAD:"):
+                    self.after(0, lambda m=line.split(":", 1)[1].strip(): status_lbl.config(text=m))
+                    self.after(0, lambda m=line: append_log(m))
+                elif line.startswith("INSTALL:"):
+                    self.after(0, lambda m=line.split(":", 1)[1].strip(): status_lbl.config(text=m))
+                    self.after(0, lambda m=line: append_log(m))
+                elif line.startswith("OK:"):
+                    success_count += 1
+                    self.after(0, lambda m=f"  ✅ {line[3:].strip()}": append_log(m))
+                elif line.startswith("FAIL:"):
+                    fail_count += 1
+                    self.after(0, lambda m=f"  ❌ {line[5:].strip()}": append_log(m))
+                elif line.startswith("DONE:"):
+                    self.after(0, lambda m=f"\n--- {line[5:].strip()} ---": append_log(m))
+                elif line.startswith("EMPTY:"):
+                    self.after(0, lambda m=line[6:].strip(): append_log(m))
+                elif line.startswith("ERROR:"):
+                    self.after(0, lambda m=f"❌ HIBA: {line[6:].strip()}": append_log(m))
+                else:
+                    self.after(0, lambda m=line: append_log(m))
+
+            process.wait()
+
+            # Eszközök újraszkennelése a telepítés után
+            if success_count > 0:
+                self.after(0, lambda: append_log("Eszközök újraszkennelése..."))
+                self.after(0, lambda: status_lbl.config(text="Telepített driverek aktiválása..."))
+                subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo,
+                              capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                self.after(0, lambda: append_log("✅ Eszközök frissítve!"))
+
+            def finish():
+                progress.stop()
+                if success_count > 0:
+                    progress.config(mode='determinate', maximum=success_count + fail_count, value=success_count)
+                    status_lbl.config(text=f"Kész! {success_count} sikeres, {fail_count} sikertelen")
+                    messagebox.showinfo("Befejezve",
+                        f"Driver frissítések telepítve!\n\n"
+                        f"✅ Sikeres: {success_count}\n"
+                        f"❌ Sikertelen: {fail_count}\n\n"
+                        f"Ajánlott a gép újraindítása a változások érvényesítéséhez.")
+                else:
+                    status_lbl.config(text="Nem sikerült drivereket telepíteni")
+                    if fail_count > 0:
+                        messagebox.showwarning("Telepítés sikertelen",
+                            f"Egy driver sem települt sikeresen.\nSikertelen: {fail_count}\n\n"
+                            f"Próbáld újraindítani a gépet és futtasd újra!")
+                    else:
+                        messagebox.showinfo("Nincs frissítés", "Nem található telepíthető driver frissítés.")
+                prog_win.destroy()
+
+            self.after(0, finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _install_via_catalog(self):
+        """MS Update Catalog-ból letöltött CAB fájlok telepítése pnputil-lal (fallback mód)."""
+        prog_win = tk.Toplevel(self)
+        prog_win.title("WU Driver Tömeges Telepítése (Katalógus)")
+        prog_win.geometry("600x350")
+        prog_win.transient(self)
+        prog_win.grab_set()
+
+        lbl = ttk.Label(prog_win, text=f"{len(self.hw_updates_pool)} db Windows Update driver letöltése és telepítése...", justify=tk.CENTER)
+        lbl.pack(pady=5)
+
+        progress = ttk.Progressbar(prog_win, orient=tk.HORIZONTAL, length=500, mode='determinate')
+        progress.pack(pady=5)
+        progress.config(maximum=len(self.hw_updates_pool))
+        
+        status_lbl = ttk.Label(prog_win, text="Inicializálás...", font=("Arial", 8))
+        status_lbl.pack(pady=5)
+        
+        text_frame = tk.Frame(prog_win)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+        log_text = tk.Text(text_frame, height=10, state=tk.DISABLED, bg="#F3F3F3", font=("Consolas", 8))
+        log_scroll = ttk.Scrollbar(text_frame, command=log_text.yview)
+        log_text.configure(yscrollcommand=log_scroll.set)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def append_log(msg):
+            logging.info(f"WU_INSTALL: {msg}")
+            log_text.config(state=tk.NORMAL)
+            log_text.insert(tk.END, msg + "\n")
+            log_text.see(tk.END)
+            log_text.config(state=tk.DISABLED)
+
+        def worker():
+            import os, urllib.request, ssl, shutil
+            import subprocess
+            ssl_ctx = ssl._create_unverified_context()
+            
+            temp_dir = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'driver_tool_wu')
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            success_count = 0
+            
+            for i, drv in enumerate(self.hw_updates_pool):
+                name = drv['name']
+                url = drv.get('url', '')
+                hwid = drv['hwid']
+                
+                if not url:
+                    self.after(0, lambda m=f"   [KIHAGYÁS] {name} - nincs letöltési link": append_log(m))
+                    continue
+                
+                cab_path = os.path.join(temp_dir, f"drv_{i}.cab")
+                ext_path = os.path.join(temp_dir, f"drv_ext_{i}")
+                
+                self.after(0, lambda val=i, txt=f"[{i+1}/{len(self.hw_updates_pool)}] Letöltés: {name}...": (progress.configure(value=val), status_lbl.config(text=txt)))
+                self.after(0, lambda m=f"-> {name} letöltése a Microsoft szerveréről...": append_log(m))
+                
+                try:
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+                    with urllib.request.urlopen(req, context=ssl_ctx) as response, open(cab_path, 'wb') as out_file:
+                        shutil.copyfileobj(response, out_file)
+                except Exception as e:
+                    self.after(0, lambda m=f"   [HIBA] Letöltés megszakadt: {e}": append_log(m))
+                    continue
+                
+                os.makedirs(ext_path, exist_ok=True)
+                self.after(0, lambda m=f"   Kicsomagolás (expand.exe)...": append_log(m))
+                expand_res = subprocess.run(['expand', cab_path, '-F:*', ext_path], capture_output=True, text=True, startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                if expand_res.returncode != 0:
+                    self.after(0, lambda m=f"   [ÉRTESÍTÉS] expand.exe figyelmeztetéssel tért vissza: kód={expand_res.returncode}. Log: {expand_res.stdout[:100]}": append_log(m))
+
+                self.after(0, lambda txt=f"[{i+1}/{len(self.hw_updates_pool)}] Telepítés: {name}...": status_lbl.config(text=txt))
+                self.after(0, lambda m=f"   Telepítés pnp/dism futtatása...": append_log(m))
+                
+                is_offline = hasattr(self, 'target_os_path') and self.target_os_path
+                is_pe = os.environ.get('SystemDrive', 'C:') == 'X:' or getattr(self, 'sys_drive', '').upper() == 'X:\\'
+                
+                if is_offline and not is_pe:
+                    cmd = ['dism', f'/Image:{self.target_os_path}', '/Add-Driver', f'/Driver:{ext_path}', '/Recurse', '/ForceUnsigned']
+                else:
+                    cmd = ['pnputil', '/add-driver', f"{ext_path}\\*.inf", '/subdirs', '/install']
+                    
+                res = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                self.after(0, lambda m=f"   Kimenet: {res.stdout.strip()}": append_log(m))
+                
+                if res.returncode == 0 or "Added" in res.stdout or "sikeres" in res.stdout.lower() or "successfully" in res.stdout.lower():
+                    success_count += 1
+                    self.after(0, lambda m=f"   [SIKER] {name} sikeresen feltelepítve!": append_log(m))
+                else:
+                    self.after(0, lambda m=f"   [HIBA] PnP telepítési hiba. Kód: {res.returncode}. LOG:\n{res.stdout.strip()[:150]}": append_log(m))
+
+            self.after(0, lambda: progress.configure(value=len(self.hw_updates_pool)))
+            self.after(0, lambda: append_log(f"--- FOLYAMAT VÉGE. SIKERES: {success_count}/{len(self.hw_updates_pool)} ---"))
+            
+            is_offline = hasattr(self, 'target_os_path') and self.target_os_path
+            is_pe = os.environ.get('SystemDrive', 'C:') == 'X:' or getattr(self, 'sys_drive', '').upper() == 'X:\\'
+            
+            if success_count > 0 and (not is_offline or is_pe):
+                def show_scan_win():
+                    w = tk.Toplevel(prog_win)
+                    w.title("Aktiválás folyamatban")
+                    w.geometry("450x150")
+                    w.transient(prog_win)
+                    w.grab_set()
+                    w.update_idletasks()
+                    x = prog_win.winfo_x() + (prog_win.winfo_width() // 2) - 225
+                    y = prog_win.winfo_y() + (prog_win.winfo_height() // 2) - 75
+                    w.geometry(f"+{max(0,x)}+{max(0,y)}")
+                    msg = "Eszközök újraszkennelése és frissítése a háttérben...\n\nOlykor a képernyő egy pillanatra villanhat!\nKérlek, várj türelemmel amíg befejezzük."
+                    lbl = ttk.Label(w, text=msg, justify=tk.CENTER, font=("Segoe UI", 10, "bold"))
+                    lbl.pack(expand=True, fill=tk.BOTH, padx=10, pady=20)
+                    self.__scan_win = w
+                    w.update()
+                
+                self.after(0, show_scan_win)
+                time.sleep(1.0)
+                
+                self.after(0, lambda m=f"-> Telepített eszközök újraindítása (Azonnali érvényesítés)...": append_log(m))
+                for drv in self.hw_updates_pool:
+                    pnp_id = drv.get('pnp_id')
+                    if pnp_id:
+                        subprocess.run(['pnputil', '/restart-device', pnp_id], startupinfo=startupinfo, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                self.after(0, lambda m=f"-> Hardverváltozások (eszközkezelő) újraszkennelése (pnputil /scan-devices)...": append_log(m))
+                self.after(0, lambda txt=f"Sikeres telepítések aktiválása...": status_lbl.config(text=txt))
+                subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                self.after(0, lambda m=f"   [KÉSZ] Hardverek frissítése megtörtént a Windowsban!": append_log(m))
+                
+                def close_scan_win():
+                    if hasattr(self, '__scan_win') and self.__scan_win:
+                        self.__scan_win.destroy()
+                self.after(0, close_scan_win)
+
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except: pass
+
+            def finish():
+                prog_win.destroy()
+                messagebox.showinfo("Befejezve", f"Minden letöltött driver ({success_count} db) sikeresen feltelepítve a rendszerre.")
+                
+            self.after(0, finish)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def refresh_drivers(self):
         for item in self.tree.get_children():
@@ -1565,10 +2319,27 @@ if __name__ == "__main__":
         print(f"Logolasi hiba: {e}")
         logging.basicConfig(level=logging.DEBUG)
 
+    # 1. Globális exception (kivétel) logoló - minden, ami elszállna (akár csendben is), beleíródik a fájlba
+    def global_exception_handler(exc_type, exc_value, exc_traceback):
+        logging.exception("VÁRATLAN FATÁLIS HIBA (Főszál):", exc_info=(exc_type, exc_value, exc_traceback))
+    sys.excepthook = global_exception_handler
+
+    # 2. Háttérszálak (thread) exception logolója (hogy a néma crasheket is megfogjuk)
+    import threading
+    def thread_exception_handler(args):
+        logging.exception("VÁRATLAN HIBA EGY HÁTTÉRSZÁLBAN (Thread):", exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+    threading.excepthook = thread_exception_handler
+
     logging.info("==================================================")
     logging.info("DRIVER TOOL ELINDITVA")
     logging.info(f"Futtatasi konyvtar: {os.getcwd()}")
     logging.info("==================================================")
 
     app = DriverCleanerApp()
+    
+    # 3. Tkinter (GUI) gombnyomás/grafikus hibák logolója
+    def tkinter_exception_handler(exc_type, exc_value, exc_traceback):
+        logging.exception("GUI HIBA (Tkinter callback):", exc_info=(exc_type, exc_value, exc_traceback))
+    app.report_callback_exception = tkinter_exception_handler
+
     app.mainloop()
