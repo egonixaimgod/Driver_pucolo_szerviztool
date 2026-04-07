@@ -1,4 +1,4 @@
-BUILD_NUMBER = 7
+BUILD_NUMBER = 8
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -518,7 +518,6 @@ try {
     else { $updates | ConvertTo-Json -Depth 2 -Compress }
 } catch {
     Write-Error $_.Exception.Message
-    Write-Output "[]"
 }
 """
             logging.info("WU COM API PowerShell keresés indítása...")
@@ -532,7 +531,11 @@ try {
             if res.stderr:
                 logging.warning(f"WU COM API stderr: {res.stderr[:500]}")
             
+            # Ha stderr hibát jelez és stdout üres → WU API hiba
             out = res.stdout.strip()
+            if not out and res.stderr:
+                logging.error("WU COM API hiba: nincs stdout, stderr tartalmaz hibát")
+                return None
             if out:
                 import json
                 data = json.loads(out)
