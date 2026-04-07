@@ -1,4 +1,4 @@
-BUILD_NUMBER = 11
+BUILD_NUMBER = 12
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -1252,32 +1252,51 @@ try {
         exit
     }
     
-    Write-Output "DOWNLOAD: $($ToInstall.Count) driver frissítés letöltése..."
-    $Downloader = $Session.CreateUpdateDownloader()
-    $Downloader.Updates = $ToInstall
-    $DlResult = $Downloader.Download()
-    Write-Output "DL_RESULT: ResultCode=$($DlResult.ResultCode)"
-    
-    if ($DlResult.ResultCode -ne 2 -and $DlResult.ResultCode -ne 3) {
-        Write-Output "DL_FAIL: Letöltés sikertelen! Kód: $($DlResult.ResultCode)"
-        for ($i = 0; $i -lt $ToInstall.Count; $i++) {
-            $rc = $DlResult.GetUpdateResult($i).ResultCode
-            if ($rc -ne 2) {
-                Write-Output "DL_ITEM_FAIL: $($ToInstall.Item($i).Title) => Kód: $rc"
-            }
-        }
-    }
-    
-    Write-Output "INSTALL: $($ToInstall.Count) driver frissítés telepítése..."
-    $Installer = $Session.CreateUpdateInstaller()
-    $Installer.Updates = $ToInstall
-    $InstResult = $Installer.Install()
+    $total = $ToInstall.Count
+    Write-Output "TOTAL: $total"
     
     $successCount = 0
     $failCount = 0
-    for ($i = 0; $i -lt $ToInstall.Count; $i++) {
-        $rc = $InstResult.GetUpdateResult($i).ResultCode
-        $title = $ToInstall.Item($i).Title
+    
+    for ($i = 0; $i -lt $total; $i++) {
+        $U = $ToInstall.Item($i)
+        $title = $U.Title
+        $idx = $i + 1
+        
+        # Egyedi letöltés
+        Write-Output "DLONE: $idx/$total $title"
+        $SingleColl = New-Object -ComObject Microsoft.Update.UpdateColl
+        $SingleColl.Add($U) | Out-Null
+        
+        $Downloader = $Session.CreateUpdateDownloader()
+        $Downloader.Updates = $SingleColl
+        try {
+            $DlResult = $Downloader.Download()
+        } catch {
+            Write-Output "FAIL: [LETÖLTÉS HIBA] $title"
+            $failCount++
+            continue
+        }
+        
+        if ($DlResult.ResultCode -ne 2 -and $DlResult.ResultCode -ne 3) {
+            Write-Output "FAIL: [LETÖLTÉS HIBA kód=$($DlResult.ResultCode)] $title"
+            $failCount++
+            continue
+        }
+        
+        # Egyedi telepítés
+        Write-Output "INSTONE: $idx/$total $title"
+        $Installer = $Session.CreateUpdateInstaller()
+        $Installer.Updates = $SingleColl
+        try {
+            $InstResult = $Installer.Install()
+        } catch {
+            Write-Output "FAIL: [TELEPÍTÉS HIBA] $title"
+            $failCount++
+            continue
+        }
+        
+        $rc = $InstResult.GetUpdateResult(0).ResultCode
         switch ($rc) {
             2 { Write-Output "OK: [SIKER] $title"; $successCount++ }
             3 { Write-Output "OK: [SIKER/FIGYELEM] $title"; $successCount++ }
@@ -1320,32 +1339,27 @@ try {
                     self.after(0, lambda c=found_count: counter_lbl.config(text=f"Talált driverek: {c}"))
                 elif line.startswith("SKIP:"):
                     self.after(0, lambda m=f"  ⏭ {line[5:].strip()}": append_log(m))
-                elif line.startswith("DOWNLOAD:"):
-                    # Parse count from "DOWNLOAD: N driver..."
-                    import re as _re
-                    _m = _re.search(r'(\d+)', line)
-                    if _m:
-                        install_total = int(_m.group(1))
-                    self.after(0, lambda m=line.split(":", 1)[1].strip(): status_lbl.config(text=m))
-                    self.after(0, lambda m=line: append_log(m))
-                    self.after(0, lambda t=install_total: counter_lbl.config(text=f"Letöltés: {t} driver..."))
-                elif line.startswith("DL_RESULT:") or line.startswith("DL_FAIL:") or line.startswith("DL_ITEM_FAIL:"):
-                    self.after(0, lambda m=line: append_log(m))
-                elif line.startswith("INSTALL:"):
-                    # Switch to determinate mode for install tracking
-                    _m2 = re.search(r'(\d+)', line)
-                    if _m2:
-                        install_total = int(_m2.group(1))
+                elif line.startswith("TOTAL:"):
+                    _m_total = re.search(r'(\d+)', line)
+                    if _m_total:
+                        install_total = int(_m_total.group(1))
                     def _switch_determinate(t=install_total):
                         try:
                             progress.stop()
                         except Exception:
                             pass
                         progress.config(mode='determinate', maximum=max(t, 1), value=0)
-                        counter_lbl.config(text=f"Telepítés: 0 / {t}")
+                        counter_lbl.config(text=f"0 / {t}")
                     self.after(0, _switch_determinate)
-                    self.after(0, lambda m=line.split(":", 1)[1].strip(): status_lbl.config(text=m))
-                    self.after(0, lambda m=line: append_log(m))
+                    self.after(0, lambda t=install_total: append_log(f"Összesen {t} driver letöltése és telepítése egyenként..."))
+                elif line.startswith("DLONE:"):
+                    msg = line[6:].strip()
+                    self.after(0, lambda m=msg: status_lbl.config(text=f"⬇ Letöltés: {m}"))
+                    self.after(0, lambda m=f"  ⬇ Letöltés: {msg}": append_log(m))
+                elif line.startswith("INSTONE:"):
+                    msg = line[8:].strip()
+                    self.after(0, lambda m=msg: status_lbl.config(text=f"⚙ Telepítés: {m}"))
+                    self.after(0, lambda m=f"  ⚙ Telepítés: {msg}": append_log(m))
                 elif line.startswith("OK:"):
                     success_count += 1
                     done = success_count + fail_count
