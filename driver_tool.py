@@ -1,4 +1,4 @@
-BUILD_NUMBER = 9
+BUILD_NUMBER = 10
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -631,23 +631,6 @@ try {
                 pass
             
             self.after(0, lambda html_t=sys_info_text: self.sys_info_lbl.config(text=html_t))
-
-            def get_wmi_devices(wmi_class, filter_cond="", name_prop="Name", id_prop="PNPDeviceID"):
-                cmd = f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject {wmi_class}"
-                if filter_cond:
-                    cmd += f" | Where-Object {{ {filter_cond} }}"
-                cmd += f" | Select-Object {name_prop}, {id_prop} | ConvertTo-Json -Compress"
-                try:
-                    res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, encoding='utf-8', startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
-                    out = res.stdout.strip()
-                    if not out: return []
-                    import json
-                    try:
-                        data = json.loads(out)
-                        if isinstance(data, dict): return [data]
-                        return data if isinstance(data, list) else []
-                    except Exception: return []
-                except Exception: return []
 
             self.after(0, lambda: self.install_hw_btn.config(state=tk.DISABLED, text="🚀 Kijelöltek Telepítése"))
             self.after(0, lambda: self.select_all_hw_btn.config(state=tk.DISABLED))
@@ -1711,10 +1694,9 @@ try {
                             if is_offline:
                                 rep_path = os.path.join(self.target_os_path, "Windows", "System32", "DriverStore", "FileRepository")
                             else:
-                                rep_path = r"C:\Windows\System32\DriverStore\FileRepository"
+                                rep_path = os.path.join(os.environ.get('SYSTEMROOT', r'C:\Windows'), "System32", "DriverStore", "FileRepository")
                             
-                            base_name = published_name.replace(".inf", "")
-                            dirs = glob.glob(os.path.join(rep_path, f"{base_name}*.inf_*"))
+                            dirs = glob.glob(os.path.join(rep_path, f"{published_name}_*"))
                             
                             if dirs:
                                 for d in dirs:
