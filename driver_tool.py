@@ -1,4 +1,4 @@
-BUILD_NUMBER = 13
+BUILD_NUMBER = 14
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -2286,11 +2286,13 @@ try {
 
         prog_win = tk.Toplevel(self)
         prog_win.title("Visszaállítási Pont")
-        prog_win.geometry("500x140")
+        prog_win.geometry("500x160")
         prog_win.transient(self)
         prog_win.grab_set()
         lbl = ttk.Label(prog_win, text="Rendszer-visszaállítási pont létrehozása folyamatban...\nEz eltarthat egy percig, kérlek várj!", justify=tk.CENTER, font=("Segoe UI", 10))
         lbl.pack(pady=(10, 5))
+        status_lbl = ttk.Label(prog_win, text="Rendszervédelem ellenőrzése...", font=("Segoe UI", 9))
+        status_lbl.pack(pady=(0, 5))
         rp_progress = ttk.Progressbar(prog_win, orient=tk.HORIZONTAL, length=420, mode='indeterminate', style="Green.Horizontal.TProgressbar")
         rp_progress.pack(pady=5)
         rp_progress.start(15)
@@ -2299,15 +2301,51 @@ try {
             try:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                cmd = f'powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "Checkpoint-Computer -Description \'{desc}\' -RestorePointType \'MODIFY_SETTINGS\'"'
-                res = subprocess.run(cmd, shell=True, startupinfo=startupinfo, capture_output=True, text=True, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                si_flags = dict(startupinfo=startupinfo, capture_output=True, text=True, errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+
+                # 1) Rendszervédelem engedélyezése C: meghajtón (ha nincs bekapcsolva)
+                self.after(0, lambda: status_lbl.config(text="Rendszervédelem engedélyezése a C: meghajtón..."))
+                enable_cmd = 'powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "Enable-ComputerRestore -Drive \"C:\\\" -ErrorAction Stop"'
+                enable_res = subprocess.run(enable_cmd, shell=True, **si_flags)
+                if enable_res.returncode != 0:
+                    err_msg = (enable_res.stderr or enable_res.stdout or "Ismeretlen hiba").strip()
+                    def show_enable_err(msg=err_msg):
+                        if prog_win.winfo_exists(): prog_win.destroy()
+                        messagebox.showerror("Rendszervédelem Hiba",
+                            f"Nem sikerült engedélyezni a Rendszervédelmet a C: meghajtón!\n\n"
+                            f"Lehetséges okok:\n"
+                            f"• A program nem fut rendszergazdaként\n"
+                            f"• Csoportházirend (GPO) tiltja\n"
+                            f"• A meghajtó nem támogatja\n\n"
+                            f"Hibaüzenet:\n{msg}")
+                    self.after(0, show_enable_err)
+                    return
+
+                # 2) Visszaállítási pont létrehozása
+                self.after(0, lambda: status_lbl.config(text=f"Visszaállítási pont mentése: {desc}"))
+                create_cmd = f'powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "Checkpoint-Computer -Description \'{desc}\' -RestorePointType \'MODIFY_SETTINGS\' -ErrorAction Stop"'
+                res = subprocess.run(create_cmd, shell=True, **si_flags)
+
+                # 3) Ellenőrzés — tényleg létrejött-e?
+                self.after(0, lambda: status_lbl.config(text="Visszaállítási pont ellenőrzése..."))
+                verify_cmd = f'powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "(Get-ComputerRestorePoint | Where-Object {{ $_.Description -eq \'{desc}\' }}).Description"'
+                verify_res = subprocess.run(verify_cmd, shell=True, **si_flags)
+                verified = desc in (verify_res.stdout or '')
 
                 def show_result():
                     if prog_win.winfo_exists(): prog_win.destroy()
-                    if res.returncode == 0:
-                        messagebox.showinfo("Siker", f"A '{desc}' nevű visszaállítási pont sikeresen létrejött!")
+                    if res.returncode == 0 and verified:
+                        messagebox.showinfo("Siker", f"A '{desc}' nevű visszaállítási pont sikeresen létrejött és ellenőrizve!")
+                    elif res.returncode == 0:
+                        messagebox.showwarning("Figyelem",
+                            f"A Checkpoint-Computer lefutott (kód: 0), de a visszaállítási pont NEM található a listában.\n\n"
+                            f"Lehetséges ok: a Windows 24 órán belül már készített egy pontot, és nem engedélyez újat.\n\n"
+                            f"Ellenőrizd kézzel: Start → 'rstrui' → Enter")
                     else:
-                        messagebox.showerror("Hiba", f"Nem sikerült létrehozni a visszaállítási pontot. Biztosan engedélyezve van a Rendszervédelem a Windowsban?\n\nKimenet: {res.stderr}")
+                        err_msg = (res.stderr or res.stdout or "Ismeretlen hiba").strip()
+                        messagebox.showerror("Hiba",
+                            f"Nem sikerült létrehozni a visszaállítási pontot!\n\n"
+                            f"Hibaüzenet:\n{err_msg}")
                 self.after(0, show_result)
             except Exception as e:
                 def show_err(err=e):
