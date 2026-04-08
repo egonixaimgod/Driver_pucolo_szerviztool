@@ -1,4 +1,4 @@
-BUILD_NUMBER = 28
+BUILD_NUMBER = 29
 
 import os
 import sys
@@ -310,14 +310,44 @@ class DriverToolApi:
 
                 # System info
                 try:
-                    ps_cmd = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject Win32_ComputerSystem | Select-Object Manufacturer, Model, PCSystemType | ConvertTo-Json"
+                    ps_cmd = (
+                        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                        "$cs = Get-WmiObject Win32_ComputerSystem | Select-Object Manufacturer, Model, PCSystemType; "
+                        "$bb = Get-WmiObject Win32_BaseBoard | Select-Object Manufacturer, Product; "
+                        "$enc = Get-WmiObject Win32_SystemEnclosure | Select-Object ChassisTypes; "
+                        "@{CS=$cs; BB=$bb; ENC=$enc} | ConvertTo-Json -Depth 3"
+                    )
                     res = self._run(["powershell", "-NoProfile", "-Command", ps_cmd], encoding='utf-8')
                     if res.stdout.strip():
                         data = json.loads(res.stdout.strip())
-                        man = data.get("Manufacturer", "").strip()
-                        mod = data.get("Model", "").strip()
-                        pct = data.get("PCSystemType", -1)
-                        prefix = "💻 Laptop" if pct == 2 else "🖥️ Asztali (Desktop)"
+                        cs = data.get("CS", {}) or {}
+                        bb = data.get("BB", {}) or {}
+                        enc = data.get("ENC", {}) or {}
+
+                        man = (cs.get("Manufacturer") or "").strip()
+                        mod = (cs.get("Model") or "").strip()
+                        pct = cs.get("PCSystemType", -1)
+
+                        # Fallback: ha OEM placeholder, használjuk az alaplap infót
+                        oem_junk = {"to be filled by o.e.m.", "default string", "system manufacturer",
+                                    "system product name", "not applicable", ""}
+                        if man.lower() in oem_junk:
+                            man = (bb.get("Manufacturer") or "").strip()
+                        if mod.lower() in oem_junk:
+                            mod = (bb.get("Product") or "").strip()
+                        if man.lower() in oem_junk:
+                            man = "Ismeretlen gyártó"
+                        if mod.lower() in oem_junk:
+                            mod = "Ismeretlen modell"
+
+                        # Chassis-alapú laptop/desktop detekció (pontosabb mint PCSystemType)
+                        chassis = enc.get("ChassisTypes", []) or []
+                        if isinstance(chassis, int):
+                            chassis = [chassis]
+                        laptop_chassis = {8, 9, 10, 11, 14, 30, 31, 32}  # Portable, Laptop, Notebook, Sub Notebook, etc.
+                        is_laptop = pct == 2 or any(c in laptop_chassis for c in chassis)
+                        prefix = "💻 Laptop" if is_laptop else "🖥️ Asztali (Desktop)"
+
                         sys_info_text = f"{prefix} | {man} - {mod}"
                 except Exception:
                     pass
