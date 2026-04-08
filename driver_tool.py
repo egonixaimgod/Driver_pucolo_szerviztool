@@ -1499,5 +1499,9 @@ if __name__ == "__main__":
     def on_start():
         api.set_window(window)
 
-    webview.start(func=on_start, debug=False)
-    os._exit(0)
+    try:
+        webview.start(func=on_start, debug=False)
+    except Exception:
+        pass
+    finally:
+        os._exit(0)
