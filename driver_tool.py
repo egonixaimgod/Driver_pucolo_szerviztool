@@ -1,4 +1,4 @@
-BUILD_NUMBER = 14
+BUILD_NUMBER = 15
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -199,11 +199,14 @@ class DriverCleanerApp(tk.Tk):
         rp_btn = ttk.Button(backup_frame, text="Új Rendszer-visszaállítási Pont", command=self.create_restore_point)
         rp_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
 
-        export_btn = ttk.Button(backup_frame, text="Összes third party Driver Lementése (Export)", command=self.backup_drivers)
+        export_btn = ttk.Button(backup_frame, text="Third Party Driverek Lementése", command=self.backup_drivers)
         export_btn.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
+        export_all_btn = ttk.Button(backup_frame, text="ÖSSZES Driver Lementése (Third Party + Windows)", command=self.backup_all_drivers)
+        export_all_btn.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
         restore_btn = ttk.Button(backup_frame, text="Lementett Driverek Visszaállítása", command=self.restore_drivers)
-        restore_btn.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        restore_btn.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
 
         backup_frame.columnconfigure(0, weight=1)
         backup_frame.columnconfigure(1, weight=1)
@@ -2439,6 +2442,132 @@ try {
                 self.after(0, on_err)
 
         # Külön szálon indítjuk, hogy a GUI reszponzív maradjon és lássuk a csúszkát
+        threading.Thread(target=worker, daemon=True).start()
+
+    def backup_all_drivers(self):
+        """ÖSSZES driver (third-party + Windows inbox) lementése pnputil-lal."""
+        dest_dir = filedialog.askdirectory(title="Válassz egy mappát az ÖSSZES driver kimentéséhez")
+        if not dest_dir:
+            return
+
+        backup_folder = os.path.join(dest_dir, f"ALL_Driver_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        os.makedirs(backup_folder, exist_ok=True)
+
+        prog_win, progress, status_lbl, counter_lbl, log_text, append_log = self._create_progress_window(
+            "ÖSSZES Driver Exportálása...",
+            f"Összes driver (Third Party + Windows) kimentése ide:\n{backup_folder}\nEz több percig is eltarthat!",
+            width=650, height=400, mode='indeterminate'
+        )
+
+        def worker():
+            try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+                self.after(0, lambda: append_log("1. lépés: Driver lista lekérdezése (pnputil /enum-drivers)..."))
+                self.after(0, lambda: status_lbl.config(text="Driver lista lekérdezése..."))
+
+                # Összes driver felsorolása
+                enum_res = subprocess.run(
+                    ['pnputil', '/enum-drivers'],
+                    capture_output=True, text=True, errors='replace',
+                    startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+
+                # .inf nevek kinyerése
+                import re as _re
+                all_infs = _re.findall(r'(oem\d+\.inf)', enum_res.stdout, _re.IGNORECASE)
+                # Windows inbox driverek is kellenek — azokat a DriverStore-ból szedjük
+                driverstore_path = os.path.join(os.environ.get('SYSTEMROOT', r'C:\Windows'), 'System32', 'DriverStore', 'FileRepository')
+
+                self.after(0, lambda c=len(all_infs): append_log(f"  Talált OEM driverek: {c} db"))
+
+                # 2. lépés: OEM driverek exportálása pnputil-lal egyenként
+                self.after(0, lambda: append_log("\n2. lépés: OEM driverek exportálása egyenként..."))
+
+                total_oem = len(all_infs)
+                success_count = 0
+                fail_count = 0
+
+                if total_oem > 0:
+                    def switch_det(t=total_oem):
+                        try: progress.stop()
+                        except Exception: pass
+                        progress.config(mode='determinate', maximum=t, value=0)
+                    self.after(0, switch_det)
+
+                for i, inf_name in enumerate(all_infs):
+                    self.after(0, lambda idx=i+1, t=total_oem, nm=inf_name: (
+                        progress.config(value=idx),
+                        status_lbl.config(text=f"Export: {nm} ({idx}/{t})"),
+                        counter_lbl.config(text=f"{idx} / {t}")
+                    ))
+
+                    inf_folder = os.path.join(backup_folder, inf_name.replace('.inf', ''))
+                    os.makedirs(inf_folder, exist_ok=True)
+
+                    res = subprocess.run(
+                        ['pnputil', '/export-driver', inf_name, inf_folder],
+                        capture_output=True, text=True, errors='replace',
+                        startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    if res.returncode == 0:
+                        success_count += 1
+                    else:
+                        fail_count += 1
+                        self.after(0, lambda nm=inf_name, e=res.stdout.strip()[:100]: append_log(f"  ❌ {nm}: {e}"))
+
+                self.after(0, lambda s=success_count, f=fail_count: append_log(f"\n  OEM export kész: ✅ {s} sikeres, ❌ {f} sikertelen"))
+
+                # 3. lépés: DriverStore FileRepository teljes másolása (inbox driverek)
+                self.after(0, lambda: append_log("\n3. lépés: Windows inbox driverek másolása (DriverStore)..."))
+                self.after(0, lambda: status_lbl.config(text="Windows inbox driverek másolása..."))
+                self.after(0, lambda: progress.config(mode='indeterminate'))
+                try: progress.start(15)
+                except Exception: pass
+
+                inbox_folder = os.path.join(backup_folder, '_Windows_Inbox_Drivers')
+                os.makedirs(inbox_folder, exist_ok=True)
+
+                # robocopy a teljes FileRepository-t másolja
+                robo_res = subprocess.run(
+                    ['robocopy', driverstore_path, inbox_folder, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP'],
+                    capture_output=True, text=True, errors='replace',
+                    startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                # robocopy 0-7 mind "sikeres" (8+ a hiba)
+                if robo_res.returncode < 8:
+                    self.after(0, lambda: append_log("  ✅ Windows inbox driverek sikeresen másolva!"))
+                else:
+                    self.after(0, lambda rc=robo_res.returncode: append_log(f"  ⚠ Robocopy figyelmeztetés, kód: {rc} (nem minden fájl másolódott)"))
+
+                # Összegzés
+                total_size = 0
+                for dirpath, dirnames, filenames in os.walk(backup_folder):
+                    for f in filenames:
+                        total_size += os.path.getsize(os.path.join(dirpath, f))
+                size_mb = total_size / (1024 * 1024)
+
+                def finish():
+                    try: progress.stop()
+                    except Exception: pass
+                    if prog_win.winfo_exists(): prog_win.destroy()
+                    messagebox.showinfo("ÖSSZES Driver Export Kész",
+                        f"Az összes driver sikeresen lementve ide:\n{backup_folder}\n\n"
+                        f"📦 OEM (third-party): {success_count} db\n"
+                        f"📦 Windows inbox: DriverStore másolva\n"
+                        f"📁 Összes méret: {size_mb:.0f} MB\n\n"
+                        f"Visszaállításhoz használd a 'Lementett Driverek Visszaállítása' gombot!")
+                self.after(0, finish)
+
+            except Exception as e:
+                def on_err(err=e):
+                    try: progress.stop()
+                    except Exception: pass
+                    if prog_win.winfo_exists(): prog_win.destroy()
+                    messagebox.showerror("Hiba", f"Váratlan hiba az exportálás során:\n{str(err)}")
+                self.after(0, on_err)
+
         threading.Thread(target=worker, daemon=True).start()
 
     def restore_drivers(self):
