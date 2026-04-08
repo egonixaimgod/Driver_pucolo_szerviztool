@@ -1,4 +1,4 @@
-BUILD_NUMBER = 29
+BUILD_NUMBER = 30
 
 import os
 import sys
@@ -610,8 +610,8 @@ try {
 
     def _install_wu_api(self, selected_pool):
         def worker():
-            self.emit('task_start', {'task': 'wu_install', 'title': f'WU Driver Telepítés ({len(selected_pool)} db)'})
-            self.emit('task_progress', {'task': 'wu_install', 'log': 'Windows Update COM API telepítés indítása...', 'indeterminate': True})
+            self.emit('task_start', {'task': 'wu_install', 'title': f'Driver Telepítés WU Szerverekről ({len(selected_pool)} db)'})
+            self.emit('task_progress', {'task': 'wu_install', 'log': 'Windows Update szervereiről történő telepítés indítása...', 'indeterminate': True})
 
             pool_hwids = [drv.get('hwid', '').upper() for drv in selected_pool if drv.get('hwid')]
             hwid_list_ps = ','.join(f'"{h}"' for h in pool_hwids)
@@ -868,8 +868,8 @@ try {
                 self.emit('task_progress', {'task': 'autofix', 'log': '⚠ Scan timeout/hiba — folytatás...'})
 
             # PHASE 4+5: WU search & install (single PS process)
-            self.emit('task_progress', {'task': 'autofix', 'phase': '🟠 4. FÁZIS: WU keresés + telepítés',
-                                        'log': '=' * 50 + '\nFÁZIS 4: WU driver keresés és telepítés...\n', 'indeterminate': True})
+            self.emit('task_progress', {'task': 'autofix', 'phase': '🟠 4. FÁZIS: Driver keresés + telepítés (WU szerverekről)',
+                                        'log': '=' * 50 + '\nFÁZIS 4: Driver keresés és telepítés WU szerverekről...\n', 'indeterminate': True})
 
             ps_script = r"""
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -923,8 +923,8 @@ try {
                 elif line.startswith("TOTAL:"):
                     m = re.search(r'(\d+)', line)
                     if m: install_total = int(m.group(1))
-                    self.emit('task_progress', {'task': 'autofix', 'phase': f'🟢 5. FÁZIS: {install_total} driver telepítése',
-                                                'total': max(install_total, 1), 'current': 0, 'log': f'\nÖsszesen {install_total} driver telepítése...'})
+                    self.emit('task_progress', {'task': 'autofix', 'phase': f'🟢 5. FÁZIS: {install_total} driver telepítése (WU szerverekről)',
+                                                'total': max(install_total, 1), 'current': 0, 'log': f'\nÖsszesen {install_total} driver telepítése WU szerverekről...'})
                 elif line.startswith("DLONE:"):
                     self.emit('task_progress', {'task': 'autofix', 'status': f'⬇ {line[6:].strip()}', 'log': f'  ⬇ {line[6:].strip()}'})
                 elif line.startswith("INSTONE:"):
