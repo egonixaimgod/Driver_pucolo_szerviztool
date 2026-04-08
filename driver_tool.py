@@ -1,4 +1,4 @@
-BUILD_NUMBER = 16
+BUILD_NUMBER = 17
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -1415,32 +1415,22 @@ try {
                     progress.stop()
                 except Exception:
                     pass
+                if prog_win.winfo_exists():
+                    prog_win.destroy()
                 total = success_count + fail_count
                 if success_count > 0:
-                    try:
-                        progress.config(mode='determinate', maximum=max(total, 1), value=total)
-                        status_lbl.config(text=f"Kész! {success_count} sikeres, {fail_count} sikertelen")
-                        counter_lbl.config(text=f"✅ {success_count} / {total} sikeres")
-                    except Exception:
-                        pass
                     messagebox.showinfo("Befejezve",
                         f"Driver frissítések telepítve!\n\n"
                         f"✅ Sikeres: {success_count}\n"
                         f"❌ Sikertelen: {fail_count}\n\n"
                         f"Ajánlott a gép újraindítása a változások érvényesítéséhez.")
                 else:
-                    try:
-                        status_lbl.config(text="Nem sikerült drivereket telepíteni")
-                    except Exception:
-                        pass
                     if fail_count > 0:
                         messagebox.showwarning("Telepítés sikertelen",
                             f"Egy driver sem települt sikeresen.\nSikertelen: {fail_count}\n\n"
                             f"Próbáld újraindítani a gépet és futtasd újra!")
                     else:
                         messagebox.showinfo("Nincs frissítés", "Nem található telepíthető driver frissítés.")
-                if prog_win.winfo_exists():
-                    prog_win.destroy()
 
             self.after(0, finish)
 
@@ -1716,7 +1706,7 @@ try {
                             stdout = ""
                         res = DummyRes()
 
-                    if res.returncode == 0 or "Deleted" in res.stdout or "törölve" in res.stdout or "t\xf6r\xf6lve" in res.stdout or "successfully" in res.stdout.lower():
+                    if res.returncode == 0 or "Deleted" in res.stdout or "törölve" in res.stdout or "successfully" in res.stdout.lower():
                         success_count += 1
                         self.after(0, lambda m=f"   [SIKER] {published_name} letorolve.": append_log(m))
                     else:
@@ -2556,7 +2546,10 @@ try {
                 total_size = 0
                 for dirpath, dirnames, filenames in os.walk(backup_folder):
                     for f in filenames:
-                        total_size += os.path.getsize(os.path.join(dirpath, f))
+                        try:
+                            total_size += os.path.getsize(os.path.join(dirpath, f))
+                        except OSError:
+                            pass
                 size_mb = total_size / (1024 * 1024)
 
                 def finish():
