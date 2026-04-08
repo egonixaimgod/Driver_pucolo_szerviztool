@@ -66,6 +66,14 @@ class DriverToolApi:
 
     def set_window(self, window):
         self._window = window
+        # Wait for WebView2 DOM to be ready
+        for _ in range(50):
+            try:
+                if self._window and self._window.evaluate_js('1+1') == 2:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)
 
     def emit(self, event, data=None):
         if self._window:
@@ -73,7 +81,14 @@ class DriverToolApi:
                 payload = json.dumps({"event": event, "data": data}, ensure_ascii=False, default=str)
                 self._window.evaluate_js(f'window.handlePyEvent({payload})')
             except Exception as e:
-                logging.error(f"emit error ({event}): {e}")
+                if 'NoneType' in str(e):
+                    time.sleep(0.5)
+                    try:
+                        self._window.evaluate_js(f'window.handlePyEvent({payload})')
+                    except Exception:
+                        pass
+                else:
+                    logging.error(f"emit error ({event}): {e}")
 
     def _run(self, cmd, **kwargs):
         return subprocess.run(cmd, capture_output=True, text=True, errors='replace',
