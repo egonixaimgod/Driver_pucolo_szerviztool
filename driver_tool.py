@@ -1,4 +1,4 @@
-BUILD_NUMBER = 18
+BUILD_NUMBER = 19
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -319,10 +319,11 @@ class DriverCleanerApp(tk.Tk):
 
         autofix_warn = ttk.Label(autofix_frame, text=(
             "Ez a funkció AUTOMATIKUSAN elvégzi a teljes driver újratelepítést:\n\n"
-            "1️⃣  Összes third-party (nem Windows gyári) driver TÖRLÉSE\n"
-            "2️⃣  Hardver újraszkennelés (Windows alap driverek visszaállása)\n"
-            "3️⃣  Windows Update-ről az összes elérhető driver LETÖLTÉSE és TELEPÍTÉSE\n"
-            "4️⃣  Automatikus ÚJRAINDÍTÁS\n\n"
+            "1️⃣  Windows Update driver keresés LETILTÁSA (registry + policy)\n"
+            "2️⃣  Összes third-party (nem Windows gyári) driver TÖRLÉSE\n"
+            "3️⃣  Hardver újraszkennelés (Windows alap driverek visszaállása)\n"
+            "4️⃣  Windows Update-ről az összes elérhető driver LETÖLTÉSE és TELEPÍTÉSE\n"
+            "5️⃣  Automatikus ÚJRAINDÍTÁS\n\n"
             "⚠️  A folyamat közben NE használd a gépet! A képernyő villoghat!\n"
             "⏱️  Becsült idő: 5-15 perc (internetsebesség és driverek számától függ)"
         ), font=("Segoe UI", 10), wraplength=550, justify=tk.LEFT)
@@ -1850,10 +1851,11 @@ try {
         confirm = messagebox.askyesno(
             "⚡ 1 Kattintásos Driver Fix",
             "Ez a művelet:\n\n"
-            "1. TÖRLI az összes third-party drivert\n"
-            "2. Újraszkennel minden hardvert\n"
-            "3. Windows Update-ről TELEPÍTI az összes elérhető drivert\n"
-            "4. Automatikusan ÚJRAINDÍTJA a gépet\n\n"
+            "1. LETILTJA a WU automatikus driver keresést\n"
+            "2. TÖRLI az összes third-party drivert\n"
+            "3. Újraszkennel minden hardvert\n"
+            "4. Windows Update-ről TELEPÍTI az összes elérhető drivert\n"
+            "5. Automatikusan ÚJRAINDÍTJA a gépet\n\n"
             "⚠️ A folyamat közben NE használd a gépet!\n\n"
             "Biztosan elindítod?",
             icon='warning'
@@ -1934,11 +1936,92 @@ try {
                 return f"Eltelt idő: {m:02d}:{s:02d}"
 
             # ========================================
-            # PHASE 1: Third-party driverek törlése
+            # PHASE 1: WU driver keresés letiltása
             # ========================================
-            self.after(0, lambda: set_phase("🔴 1. FÁZIS: Third-party driverek törlése"))
+            self.after(0, lambda: set_phase("⛔ 1. FÁZIS: WU driver keresés letiltása"))
             self.after(0, lambda: append_log("=" * 50))
-            self.after(0, lambda: append_log("FÁZIS 1: Third-party driverek listázása..."))
+            self.after(0, lambda: append_log("FÁZIS 1: Windows Update driver keresés letiltása..."))
+            self.after(0, lambda: set_status("Registry és Group Policy beállítása..."))
+            self.after(0, lambda: set_counter(""))
+            self.after(0, lambda: set_progress(0, 4))
+
+            import winreg
+            wu_disable_ok = True
+
+            # 1/4: ExcludeWUDriversInQualityUpdate = 1
+            self.after(0, lambda: append_log("  1. ExcludeWUDriversInQualityUpdate = 1"))
+            try:
+                key_path = r"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+                with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_WRITE) as key:
+                    winreg.SetValueEx(key, "ExcludeWUDriversInQualityUpdate", 0, winreg.REG_DWORD, 1)
+                self.after(0, lambda: append_log("    ✅ Registry beállítva"))
+            except Exception as e:
+                self.after(0, lambda err=e: append_log(f"    ⚠ winreg hiba: {err}"))
+            # Fallback reg.exe-vel is
+            subprocess.run(['reg', 'add', r'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate',
+                           '/v', 'ExcludeWUDriversInQualityUpdate', '/t', 'REG_DWORD', '/d', '1', '/f'],
+                          startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW,
+                          capture_output=True, text=True, errors='replace')
+            self.after(0, lambda: set_progress(1, 4))
+
+            # 2/4: SearchOrderConfig = 0
+            self.after(0, lambda: append_log("  2. SearchOrderConfig = 0"))
+            try:
+                key_path2 = r"SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching"
+                with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path2, 0, winreg.KEY_WRITE) as key:
+                    winreg.SetValueEx(key, "SearchOrderConfig", 0, winreg.REG_DWORD, 0)
+                self.after(0, lambda: append_log("    ✅ Registry beállítva"))
+            except Exception as e:
+                self.after(0, lambda err=e: append_log(f"    ⚠ winreg hiba: {err}"))
+            subprocess.run(['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching',
+                           '/v', 'SearchOrderConfig', '/t', 'REG_DWORD', '/d', '0', '/f'],
+                          startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW,
+                          capture_output=True, text=True, errors='replace')
+            self.after(0, lambda: set_progress(2, 4))
+
+            # 3/4: WU szolgáltatás újraindítása
+            self.after(0, lambda: append_log("  3. Windows Update szolgáltatás újraindítása..."))
+            self.after(0, lambda: set_status("WU szolgáltatás újraindítása..."))
+            subprocess.run('net stop wuauserv & net start wuauserv', shell=True,
+                          startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW,
+                          capture_output=True, text=True, errors='replace')
+            self.after(0, lambda: append_log("    ✅ WU szolgáltatás újraindítva"))
+            self.after(0, lambda: set_progress(3, 4))
+
+            # 4/4: Ellenőrzés
+            self.after(0, lambda: append_log("  4. Beállítások ellenőrzése..."))
+            try:
+                res_chk = subprocess.run(['reg', 'query', r'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate',
+                                         '/v', 'ExcludeWUDriversInQualityUpdate'],
+                                        startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW,
+                                        capture_output=True, text=True, errors='replace')
+                if '0x1' in res_chk.stdout:
+                    self.after(0, lambda: append_log("    ✅ ExcludeWUDriversInQualityUpdate = 1 (OK)"))
+                else:
+                    self.after(0, lambda: append_log("    ⚠ ExcludeWUDriversInQualityUpdate — nem ellenőrizhető"))
+            except Exception:
+                pass
+            try:
+                res_chk2 = subprocess.run(['reg', 'query', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching',
+                                          '/v', 'SearchOrderConfig'],
+                                         startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW,
+                                         capture_output=True, text=True, errors='replace')
+                if '0x0' in res_chk2.stdout:
+                    self.after(0, lambda: append_log("    ✅ SearchOrderConfig = 0 (OK)"))
+                else:
+                    self.after(0, lambda: append_log("    ⚠ SearchOrderConfig — nem ellenőrizhető"))
+            except Exception:
+                pass
+            self.after(0, lambda: set_progress(4, 4))
+            self.after(0, lambda: append_log("\n✅ WU driver keresés sikeresen letiltva!\n"))
+            self.after(0, lambda: set_time(elapsed()))
+
+            # ========================================
+            # PHASE 2: Third-party driverek törlése
+            # ========================================
+            self.after(0, lambda: set_phase("🔴 2. FÁZIS: Third-party driverek törlése"))
+            self.after(0, lambda: append_log("=" * 50))
+            self.after(0, lambda: append_log("FÁZIS 2: Third-party driverek listázása..."))
 
             drivers = self.get_third_party_drivers()
             if not drivers:
@@ -1985,14 +2068,14 @@ try {
                     append_log(f"\n--- Törlés kész. Sikeres: {s}, Sikertelen: {f} ---\n"))
 
             # ========================================
-            # PHASE 2: Hardver újraszkennelés
+            # PHASE 3: Hardver újraszkennelés
             # ========================================
-            self.after(0, lambda: set_phase("🟡 2. FÁZIS: Hardver újraszkennelés"))
+            self.after(0, lambda: set_phase("🟡 3. FÁZIS: Hardver újraszkennelés"))
             self.after(0, lambda: set_status("Windows alapértelmezett driverek visszaállítása..."))
             self.after(0, lambda: set_counter(""))
             self.after(0, lambda: set_progress(0, 100))
             self.after(0, lambda: append_log("=" * 50))
-            self.after(0, lambda: append_log("FÁZIS 2: pnputil /scan-devices futtatása..."))
+            self.after(0, lambda: append_log("FÁZIS 3: pnputil /scan-devices futtatása..."))
 
             try:
                 subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo,
@@ -2008,14 +2091,14 @@ try {
             self.after(0, lambda: set_time(elapsed()))
 
             # ========================================
-            # PHASE 3: WU COM API keresés
+            # PHASE 4: WU COM API keresés
             # ========================================
-            self.after(0, lambda: set_phase("🟠 3. FÁZIS: Windows Update driver keresés"))
+            self.after(0, lambda: set_phase("🟠 4. FÁZIS: Windows Update driver keresés"))
             self.after(0, lambda: set_status("WU COM API-n keresztüli keresés... (ez eltarthat 1-3 percig)"))
             self.after(0, lambda: set_counter("Keresés folyamatban..."))
             self.after(0, lambda: set_progress(0, 100))
             self.after(0, lambda: append_log("=" * 50))
-            self.after(0, lambda: append_log("FÁZIS 3: Windows Update COM API driver keresés..."))
+            self.after(0, lambda: append_log("FÁZIS 4: Windows Update COM API driver keresés..."))
 
             wu_results = self._search_wu_api()
 
@@ -2040,12 +2123,12 @@ try {
             # ========================================
             if wu_results:
                 wu_count = len(wu_results)
-                self.after(0, lambda c=wu_count: set_phase(f"🟢 4. FÁZIS: {c} driver letöltése és telepítése"))
+                self.after(0, lambda c=wu_count: set_phase(f"🟢 5. FÁZIS: {c} driver letöltése és telepítése"))
                 self.after(0, lambda: set_status("Windows Update COM API telepítés indítása..."))
                 self.after(0, lambda c=wu_count: set_counter(f"0 / {c}"))
                 self.after(0, lambda c=wu_count: set_progress(0, c))
                 self.after(0, lambda: append_log("=" * 50))
-                self.after(0, lambda c=wu_count: append_log(f"FÁZIS 4: {c} driver letöltése és telepítése WU API-n keresztül...\n"))
+                self.after(0, lambda c=wu_count: append_log(f"FÁZIS 5: {c} driver letöltése és telepítése WU API-n keresztül...\n"))
 
                 # WU COM API: összes driver telepítése egyszerre (egy PS processz)
                 ps_script = r"""
@@ -2208,11 +2291,11 @@ try {
             self.after(0, lambda: set_time(elapsed()))
 
             # ========================================
-            # PHASE 5: Újraindítás
+            # PHASE 6: Újraindítás
             # ========================================
-            self.after(0, lambda: set_phase("🔵 5. FÁZIS: Automatikus újraindítás"))
+            self.after(0, lambda: set_phase("🔵 6. FÁZIS: Automatikus újraindítás"))
             self.after(0, lambda: append_log("\n" + "=" * 50))
-            self.after(0, lambda: append_log("FÁZIS 5: A gép 30 másodperc múlva újraindul!"))
+            self.after(0, lambda: append_log("FÁZIS 6: A gép 30 másodperc múlva újraindul!"))
             self.after(0, lambda: set_status("A gép 30 másodperc múlva újraindul..."))
 
             overall_secs = int(_time.time() - overall_start)
