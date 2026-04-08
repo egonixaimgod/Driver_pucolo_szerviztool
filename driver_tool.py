@@ -1,4 +1,4 @@
-BUILD_NUMBER = 17
+BUILD_NUMBER = 18
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -121,6 +121,9 @@ class DriverCleanerApp(tk.Tk):
         btn_hw = ttk.Button(sidebar_frame, text="🖥️ Hardver Infó & Telepítés", command=lambda: self.switch_view("hw"))
         btn_hw.pack(fill=tk.X, padx=10, pady=5)
 
+        btn_autofix = ttk.Button(sidebar_frame, text="⚡ 1 Kattintásos Driver Fix", command=lambda: self.switch_view("autofix"))
+        btn_autofix.pack(fill=tk.X, padx=10, pady=5)
+
         # 4. Content Area on the right
         self.content_frame = tk.Frame(main_body, bg="#FFFFFF")
         self.content_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -130,6 +133,7 @@ class DriverCleanerApp(tk.Tk):
         self.backup_view = tk.Frame(self.content_frame, bg="#FFFFFF")
         self.wu_view = tk.Frame(self.content_frame, bg="#FFFFFF")
         self.hw_view = tk.Frame(self.content_frame, bg="#FFFFFF")
+        self.autofix_view = tk.Frame(self.content_frame, bg="#FFFFFF")
 
         # variables:
         self.list_all_var = tk.BooleanVar(value=False)
@@ -307,6 +311,29 @@ class DriverCleanerApp(tk.Tk):
         # Show drivers by default
         self.driver_view.pack(fill=tk.BOTH, expand=True)
 
+        # -----------------------------
+        # AUTOFIX VIEW CONTENT
+        # -----------------------------
+        autofix_frame = ttk.LabelFrame(self.autofix_view, text="⚡ 1 Kattintásos Automatikus Driver Fix", padding=15)
+        autofix_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        autofix_warn = ttk.Label(autofix_frame, text=(
+            "Ez a funkció AUTOMATIKUSAN elvégzi a teljes driver újratelepítést:\n\n"
+            "1️⃣  Összes third-party (nem Windows gyári) driver TÖRLÉSE\n"
+            "2️⃣  Hardver újraszkennelés (Windows alap driverek visszaállása)\n"
+            "3️⃣  Windows Update-ről az összes elérhető driver LETÖLTÉSE és TELEPÍTÉSE\n"
+            "4️⃣  Automatikus ÚJRAINDÍTÁS\n\n"
+            "⚠️  A folyamat közben NE használd a gépet! A képernyő villoghat!\n"
+            "⏱️  Becsült idő: 5-15 perc (internetsebesség és driverek számától függ)"
+        ), font=("Segoe UI", 10), wraplength=550, justify=tk.LEFT)
+        autofix_warn.pack(pady=(5, 15), anchor="w")
+
+        self.autofix_btn = tk.Button(autofix_frame, text="⚡ INDÍTÁS: Teljes Driver Újratelepítés ⚡",
+            command=self.one_click_driver_fix,
+            bg="#FF6600", fg="white", activebackground="#CC5200", activeforeground="white",
+            font=("Segoe UI", 14, "bold"), relief=tk.RAISED, bd=2, padx=20, pady=12, cursor="hand2")
+        self.autofix_btn.pack(pady=(0, 15))
+
         # Build szám jobb alsó sarokban
         build_lbl = tk.Label(self, text=f"Build {BUILD_NUMBER:03d}", font=("Segoe UI", 8), fg="#999999", bg="#F3F3F3", anchor="e")
         build_lbl.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0, 2))
@@ -316,6 +343,7 @@ class DriverCleanerApp(tk.Tk):
         self.backup_view.pack_forget()
         self.wu_view.pack_forget()
         self.hw_view.pack_forget()
+        self.autofix_view.pack_forget()
         
         if view_name == "drivers":
             self.driver_view.pack(fill=tk.BOTH, expand=True)
@@ -328,6 +356,8 @@ class DriverCleanerApp(tk.Tk):
         elif view_name == "hw":
             self.hw_view.pack(fill=tk.BOTH, expand=True)
             self.load_hardware_info()
+        elif view_name == "autofix":
+            self.autofix_view.pack(fill=tk.BOTH, expand=True)
 
     def change_target_os(self):
         d = filedialog.askdirectory(title="Válaszd ki a halott Windows meghajtóját (pl. C:\\ vagy D:\\, amin a Windows mappa van!)")
@@ -1811,6 +1841,412 @@ try {
             self.after(0, finish_scan)
 
         threading.Thread(target=scan_worker, daemon=True).start()
+
+    # =====================================================================
+    # 1 KATTINTÁSOS AUTOMATIKUS DRIVER FIX
+    # =====================================================================
+    def one_click_driver_fix(self):
+        """Teljes automatikus driver újratelepítés: törlés → scan → WU install → reboot."""
+        confirm = messagebox.askyesno(
+            "⚡ 1 Kattintásos Driver Fix",
+            "Ez a művelet:\n\n"
+            "1. TÖRLI az összes third-party drivert\n"
+            "2. Újraszkennel minden hardvert\n"
+            "3. Windows Update-ről TELEPÍTI az összes elérhető drivert\n"
+            "4. Automatikusan ÚJRAINDÍTJA a gépet\n\n"
+            "⚠️ A folyamat közben NE használd a gépet!\n\n"
+            "Biztosan elindítod?",
+            icon='warning'
+        )
+        if not confirm:
+            return
+
+        self.autofix_btn.config(state=tk.DISABLED, text="⏳ Folyamatban...")
+
+        prog_win = tk.Toplevel(self)
+        prog_win.title("⚡ 1 Kattintásos Driver Fix — Folyamatban")
+        prog_win.geometry("700x500")
+        prog_win.transient(self)
+        prog_win.grab_set()
+        prog_win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        header_lbl = ttk.Label(prog_win, text="⚡ Automatikus Driver Újratelepítés", font=("Segoe UI", 12, "bold"))
+        header_lbl.pack(pady=(10, 2))
+
+        phase_lbl = ttk.Label(prog_win, text="Inicializálás...", font=("Segoe UI", 10, "bold"), foreground="#0066CC")
+        phase_lbl.pack(pady=(2, 5))
+
+        counter_lbl = ttk.Label(prog_win, text="", font=("Segoe UI", 10, "bold"))
+        counter_lbl.pack(pady=(0, 2))
+
+        progress = ttk.Progressbar(prog_win, orient=tk.HORIZONTAL, length=620, mode='determinate',
+                                   style="Green.Horizontal.TProgressbar", maximum=100)
+        progress.pack(pady=5)
+
+        status_lbl = ttk.Label(prog_win, text="Előkészítés...", font=("Segoe UI", 9))
+        status_lbl.pack(pady=(2, 5))
+
+        time_lbl = ttk.Label(prog_win, text="", font=("Segoe UI", 9), foreground="#666666")
+        time_lbl.pack(pady=(0, 5))
+
+        text_frame = tk.Frame(prog_win)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        log_text = tk.Text(text_frame, height=14, state=tk.DISABLED, bg="#1E1E1E", fg="#00FF00",
+                           font=("Consolas", 9))
+        log_scroll = ttk.Scrollbar(text_frame, command=log_text.yview)
+        log_text.configure(yscrollcommand=log_scroll.set)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def append_log(msg):
+            logging.info(f"[AUTOFIX] {msg}")
+            log_text.config(state=tk.NORMAL)
+            log_text.insert(tk.END, msg + "\n")
+            log_text.see(tk.END)
+            log_text.config(state=tk.DISABLED)
+
+        def set_phase(text):
+            phase_lbl.config(text=text)
+
+        def set_status(text):
+            status_lbl.config(text=text)
+
+        def set_counter(text):
+            counter_lbl.config(text=text)
+
+        def set_time(text):
+            time_lbl.config(text=text)
+
+        def set_progress(value, maximum=None):
+            if maximum is not None:
+                progress.config(maximum=maximum)
+            progress.config(value=value)
+
+        def worker():
+            import time as _time
+            overall_start = _time.time()
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            def elapsed():
+                secs = int(_time.time() - overall_start)
+                m, s = divmod(secs, 60)
+                return f"Eltelt idő: {m:02d}:{s:02d}"
+
+            # ========================================
+            # PHASE 1: Third-party driverek törlése
+            # ========================================
+            self.after(0, lambda: set_phase("🔴 1. FÁZIS: Third-party driverek törlése"))
+            self.after(0, lambda: append_log("=" * 50))
+            self.after(0, lambda: append_log("FÁZIS 1: Third-party driverek listázása..."))
+
+            drivers = self.get_third_party_drivers()
+            if not drivers:
+                self.after(0, lambda: append_log("Nincs third-party driver a gépen."))
+                self.after(0, lambda: set_counter("0 driver"))
+            else:
+                del_total = len(drivers)
+                self.after(0, lambda t=del_total: append_log(f"Talált third-party driverek: {t} db"))
+                self.after(0, lambda t=del_total: set_counter(f"0 / {t} driver törölve"))
+                self.after(0, lambda t=del_total: set_progress(0, t))
+
+                del_success = 0
+                del_fail = 0
+                for i, drv in enumerate(drivers):
+                    pub = drv.get("published", "ismeretlen")
+                    prov = drv.get("provider", "")
+                    cls = drv.get("class", "")
+                    self.after(0, lambda p=pub, pr=prov, c=cls: set_status(f"Törlés: {p} ({pr} — {c})"))
+                    self.after(0, lambda p=pub, pr=prov: append_log(f"  🗑 Törlés: {p} [{pr}]"))
+
+                    try:
+                        res = subprocess.run(
+                            ['pnputil', '/delete-driver', pub, '/uninstall', '/force'],
+                            capture_output=True, text=True, startupinfo=startupinfo,
+                            errors='replace', creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        if res.returncode == 0 or "Deleted" in res.stdout or "törölve" in res.stdout or "successfully" in res.stdout.lower():
+                            del_success += 1
+                            self.after(0, lambda p=pub: append_log(f"    ✅ {p} törölve"))
+                        else:
+                            del_fail += 1
+                            self.after(0, lambda p=pub: append_log(f"    ❌ {p} — sikertelen"))
+                    except Exception as e:
+                        del_fail += 1
+                        self.after(0, lambda p=pub, err=e: append_log(f"    ❌ {p} — hiba: {err}"))
+
+                    done = i + 1
+                    self.after(0, lambda d=done, t=del_total, s=del_success, f=del_fail:
+                        (set_progress(d, t),
+                         set_counter(f"{d} / {t} driver (✅ {s}  ❌ {f})"),
+                         set_time(elapsed())))
+
+                self.after(0, lambda s=del_success, f=del_fail:
+                    append_log(f"\n--- Törlés kész. Sikeres: {s}, Sikertelen: {f} ---\n"))
+
+            # ========================================
+            # PHASE 2: Hardver újraszkennelés
+            # ========================================
+            self.after(0, lambda: set_phase("🟡 2. FÁZIS: Hardver újraszkennelés"))
+            self.after(0, lambda: set_status("Windows alapértelmezett driverek visszaállítása..."))
+            self.after(0, lambda: set_counter(""))
+            self.after(0, lambda: set_progress(0, 100))
+            self.after(0, lambda: append_log("=" * 50))
+            self.after(0, lambda: append_log("FÁZIS 2: pnputil /scan-devices futtatása..."))
+
+            try:
+                subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo,
+                              capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=120)
+                _time.sleep(5)  # Várakozás, hogy a Windows befejezze az eszközök újra-inicializálását
+                self.after(0, lambda: append_log("✅ Hardver újraszkennelés kész!"))
+            except subprocess.TimeoutExpired:
+                self.after(0, lambda: append_log("⚠ Scan timeout (120s) — folytatás..."))
+            except Exception as e:
+                self.after(0, lambda err=e: append_log(f"⚠ Scan hiba: {err} — folytatás..."))
+
+            self.after(0, lambda: set_progress(100, 100))
+            self.after(0, lambda: set_time(elapsed()))
+
+            # ========================================
+            # PHASE 3: WU COM API keresés
+            # ========================================
+            self.after(0, lambda: set_phase("🟠 3. FÁZIS: Windows Update driver keresés"))
+            self.after(0, lambda: set_status("WU COM API-n keresztüli keresés... (ez eltarthat 1-3 percig)"))
+            self.after(0, lambda: set_counter("Keresés folyamatban..."))
+            self.after(0, lambda: set_progress(0, 100))
+            self.after(0, lambda: append_log("=" * 50))
+            self.after(0, lambda: append_log("FÁZIS 3: Windows Update COM API driver keresés..."))
+
+            wu_results = self._search_wu_api()
+
+            if wu_results is None:
+                self.after(0, lambda: append_log("❌ WU API keresés hiba! Nem sikerült lekérdezni."))
+                self.after(0, lambda: set_status("WU API hiba — telepítés kihagyva"))
+                wu_results = []
+            elif len(wu_results) == 0:
+                self.after(0, lambda: append_log("ℹ Nem talált elérhető driver frissítést a Windows Update."))
+                self.after(0, lambda: set_status("Nincs elérhető driver frissítés"))
+            else:
+                self.after(0, lambda c=len(wu_results): append_log(f"✅ Talált {c} db elérhető driver frissítést!"))
+                for drv in wu_results:
+                    title = drv.get('Title', 'ismeretlen')
+                    self.after(0, lambda t=title: append_log(f"  📦 {t}"))
+
+            self.after(0, lambda: set_progress(100, 100))
+            self.after(0, lambda: set_time(elapsed()))
+
+            # ========================================
+            # PHASE 4: WU COM API telepítés
+            # ========================================
+            if wu_results:
+                wu_count = len(wu_results)
+                self.after(0, lambda c=wu_count: set_phase(f"🟢 4. FÁZIS: {c} driver letöltése és telepítése"))
+                self.after(0, lambda: set_status("Windows Update COM API telepítés indítása..."))
+                self.after(0, lambda c=wu_count: set_counter(f"0 / {c}"))
+                self.after(0, lambda c=wu_count: set_progress(0, c))
+                self.after(0, lambda: append_log("=" * 50))
+                self.after(0, lambda c=wu_count: append_log(f"FÁZIS 4: {c} driver letöltése és telepítése WU API-n keresztül...\n"))
+
+                # WU COM API: összes driver telepítése egyszerre (egy PS processz)
+                ps_script = r"""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {
+    $Session = New-Object -ComObject Microsoft.Update.Session
+    $Searcher = $Session.CreateUpdateSearcher()
+    try {
+        $SM = New-Object -ComObject Microsoft.Update.ServiceManager
+        $SM.AddService2("7971f918-a847-4430-9279-4a52d1efe18d", 7, "") | Out-Null
+    } catch {}
+    $Searcher.ServerSelection = 3
+    $Searcher.ServiceID = "7971f918-a847-4430-9279-4a52d1efe18d"
+    
+    Write-Output "SEARCH: Driver frissítések keresése..."
+    $Result = $Searcher.Search("IsInstalled=0 and Type='Driver'")
+    
+    if ($Result.Updates.Count -eq 0) {
+        Write-Output "EMPTY: Nincs elérhető driver frissítés."
+        return
+    }
+    
+    $ToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
+    foreach ($U in $Result.Updates) {
+        if (-not $U.EulaAccepted) { $U.AcceptEula() }
+        $ToInstall.Add($U) | Out-Null
+    }
+    
+    $total = $ToInstall.Count
+    Write-Output "TOTAL: $total"
+    
+    $successCount = 0
+    $failCount = 0
+    
+    for ($i = 0; $i -lt $total; $i++) {
+        $U = $ToInstall.Item($i)
+        $title = $U.Title
+        $idx = $i + 1
+        
+        Write-Output "DLONE: $idx/$total $title"
+        $SingleColl = New-Object -ComObject Microsoft.Update.UpdateColl
+        $SingleColl.Add($U) | Out-Null
+        
+        $Downloader = $Session.CreateUpdateDownloader()
+        $Downloader.Updates = $SingleColl
+        try {
+            $DlResult = $Downloader.Download()
+        } catch {
+            Write-Output "FAIL: [LETÖLTÉS HIBA] $title"
+            $failCount++
+            continue
+        }
+        
+        if ($DlResult.ResultCode -ne 2 -and $DlResult.ResultCode -ne 3) {
+            Write-Output "FAIL: [LETÖLTÉS HIBA kód=$($DlResult.ResultCode)] $title"
+            $failCount++
+            continue
+        }
+        
+        Write-Output "INSTONE: $idx/$total $title"
+        $Installer = $Session.CreateUpdateInstaller()
+        $Installer.Updates = $SingleColl
+        try {
+            $InstResult = $Installer.Install()
+        } catch {
+            Write-Output "FAIL: [TELEPÍTÉS HIBA] $title"
+            $failCount++
+            continue
+        }
+        
+        $rc = $InstResult.GetUpdateResult(0).ResultCode
+        switch ($rc) {
+            2 { Write-Output "OK: [SIKER] $title"; $successCount++ }
+            3 { Write-Output "OK: [SIKER/FIGYELEM] $title"; $successCount++ }
+            4 { Write-Output "FAIL: [HIBA] $title"; $failCount++ }
+            5 { Write-Output "FAIL: [MEGSZAKÍTVA] $title"; $failCount++ }
+            default { Write-Output "FAIL: [ISMERETLEN=$rc] $title"; $failCount++ }
+        }
+    }
+    
+    Write-Output "DONE: Sikeres=$successCount, Sikertelen=$failCount"
+    
+} catch {
+    Write-Output "ERROR: $($_.Exception.Message)"
+}
+"""
+                install_success = 0
+                install_fail = 0
+                install_total = 0
+
+                process = subprocess.Popen(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace',
+                    startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+
+                for line in process.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    if line.startswith("SEARCH:"):
+                        self.after(0, lambda m=line.split(":", 1)[1].strip(): set_status(m))
+                        self.after(0, lambda m=line: append_log(m))
+                    elif line.startswith("TOTAL:"):
+                        _m = re.search(r'(\d+)', line)
+                        if _m:
+                            install_total = int(_m.group(1))
+                        self.after(0, lambda t=install_total: set_progress(0, max(t, 1)))
+                        self.after(0, lambda t=install_total: set_counter(f"0 / {t}"))
+                        self.after(0, lambda t=install_total: append_log(f"Összesen {t} driver telepítése..."))
+                    elif line.startswith("DLONE:"):
+                        msg = line[6:].strip()
+                        self.after(0, lambda m=msg: set_status(f"⬇ Letöltés: {m}"))
+                        self.after(0, lambda m=msg: append_log(f"  ⬇ Letöltés: {m}"))
+                    elif line.startswith("INSTONE:"):
+                        msg = line[8:].strip()
+                        self.after(0, lambda m=msg: set_status(f"⚙ Telepítés: {m}"))
+                        self.after(0, lambda m=msg: append_log(f"  ⚙ Telepítés: {m}"))
+                    elif line.startswith("OK:"):
+                        install_success += 1
+                        done = install_success + install_fail
+                        self.after(0, lambda m=line[3:].strip(): append_log(f"  ✅ {m}"))
+                        self.after(0, lambda d=done, t=install_total, s=install_success, f=install_fail:
+                            (set_progress(d, max(t, 1)),
+                             set_counter(f"{d} / {t}  (✅ {s}  ❌ {f})")))
+                    elif line.startswith("FAIL:"):
+                        install_fail += 1
+                        done = install_success + install_fail
+                        self.after(0, lambda m=line[5:].strip(): append_log(f"  ❌ {m}"))
+                        self.after(0, lambda d=done, t=install_total, s=install_success, f=install_fail:
+                            (set_progress(d, max(t, 1)),
+                             set_counter(f"{d} / {t}  (✅ {s}  ❌ {f})")))
+                    elif line.startswith("DONE:"):
+                        self.after(0, lambda m=line[5:].strip(): append_log(f"\n--- {m} ---"))
+                    elif line.startswith("EMPTY:"):
+                        self.after(0, lambda m=line[6:].strip(): append_log(m))
+                    elif line.startswith("ERROR:"):
+                        self.after(0, lambda m=line[6:].strip(): append_log(f"❌ HIBA: {m}"))
+                    else:
+                        self.after(0, lambda m=line: append_log(m))
+
+                    self.after(0, lambda: set_time(elapsed()))
+
+                process.wait()
+
+                # Post-install scan
+                if install_success > 0:
+                    self.after(0, lambda: append_log("\nEszközök újraszkennelése a telepítés után..."))
+                    self.after(0, lambda: set_status("Telepített driverek aktiválása..."))
+                    subprocess.run(['pnputil', '/scan-devices'], startupinfo=startupinfo,
+                                  capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    self.after(0, lambda: append_log("✅ Eszközök frissítve!"))
+
+                self.after(0, lambda s=install_success, f=install_fail:
+                    append_log(f"\nTelepítés kész. Sikeres: {s}, Sikertelen: {f}"))
+            else:
+                self.after(0, lambda: append_log("\nNincs telepítendő driver — telepítés fázis kihagyva."))
+
+            self.after(0, lambda: set_time(elapsed()))
+
+            # ========================================
+            # PHASE 5: Újraindítás
+            # ========================================
+            self.after(0, lambda: set_phase("🔵 5. FÁZIS: Automatikus újraindítás"))
+            self.after(0, lambda: append_log("\n" + "=" * 50))
+            self.after(0, lambda: append_log("FÁZIS 5: A gép 30 másodperc múlva újraindul!"))
+            self.after(0, lambda: set_status("A gép 30 másodperc múlva újraindul..."))
+
+            overall_secs = int(_time.time() - overall_start)
+            m_total, s_total = divmod(overall_secs, 60)
+            self.after(0, lambda mt=m_total, st=s_total:
+                append_log(f"\n⚡ Teljes folyamat idő: {mt:02d}:{st:02d}"))
+            self.after(0, lambda mt=m_total, st=s_total:
+                set_time(f"Teljes idő: {mt:02d}:{st:02d}"))
+
+            # 30 másodperc visszaszámlálás
+            for countdown in range(30, 0, -1):
+                self.after(0, lambda c=countdown: set_counter(f"Újraindítás {c} másodperc múlva..."))
+                self.after(0, lambda c=countdown: set_progress(30 - c, 30))
+                _time.sleep(1)
+
+            # Reboot
+            self.after(0, lambda: append_log("🔄 Újraindítás MOST!"))
+            subprocess.run(['shutdown', '/r', '/t', '0', '/f'],
+                          startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+
+        def safe_worker():
+            try:
+                worker()
+            except Exception as e:
+                logging.error(f"AutoFix worker hiba: {e}")
+                def on_error(err=e):
+                    prog_win.protocol("WM_DELETE_WINDOW", prog_win.destroy)
+                    set_phase("❌ HIBA TÖRTÉNT")
+                    set_status(f"Hiba: {str(err)[:100]}")
+                    append_log(f"\n❌ KRITIKUS HIBA: {err}")
+                    self.autofix_btn.config(state=tk.NORMAL, text="⚡ INDÍTÁS: Teljes Driver Újratelepítés ⚡")
+                self.after(0, on_error)
+
+        threading.Thread(target=safe_worker, daemon=True).start()
 
     def check_wu_status(self):
         try:
