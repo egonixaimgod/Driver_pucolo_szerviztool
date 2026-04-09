@@ -1,4 +1,4 @@
-BUILD_NUMBER = 38
+BUILD_NUMBER = 39
 
 import os
 import sys
@@ -1376,19 +1376,53 @@ try {
                     target_repo = os.path.join(norm_target, "Windows", "System32", "DriverStore", "FileRepository")
                     target_inf = os.path.join(norm_target, "Windows", "INF")
                     
+                    def force_copy(src, dst):
+                        if not os.path.exists(src):
+                            return
+                        os.makedirs(dst, exist_ok=True)
+                        self.emit('task_progress', {'task': 'restore', 'log': f'\n  Robocopy indul: {os.path.basename(src)} -> {os.path.basename(dst)}\n  (Backup mód - Windows jogosultságok megkerülése)'})
+                        cmd = ['robocopy', src, dst, '/E', '/ZB', '/R:1', '/W:1', '/COPY:DAT', '/NC', '/NS', '/NFL', '/NDL', '/NP']
+                        res = self._run(cmd)
+                        
+                        if res.returncode < 8:
+                            self.emit('task_progress', {'task': 'restore', 'log': f'  ✅ Sikeres robocopy kényszerítés ({res.returncode})'})
+                        else:
+                            self.emit('task_progress', {'task': 'restore', 'log': f'  ⚠️ Robocopy hiba ({res.returncode}), végső tartalék: mappánkénti jogszerzés (lassabb)...'})
+                            for root, _, files in os.walk(src):
+                                if getattr(self, '_cancel_flag', False): return
+                                rel = os.path.relpath(root, src)
+                                target_dir = os.path.join(dst, rel) if rel != '.' else dst
+                                os.makedirs(target_dir, exist_ok=True)
+                                
+                                for f in files:
+                                    if getattr(self, '_cancel_flag', False): return
+                                    sfile = os.path.join(root, f)
+                                    dfile = os.path.join(target_dir, f)
+                                    if os.path.exists(dfile):
+                                        self._run(f'takeown /f "{dfile}" /A', shell=True)
+                                        self._run(f'icacls "{dfile}" /grant *S-1-5-32-544:F', shell=True)
+                                        self._run(f'attrib -R "{dfile}"', shell=True)
+                                    try:
+                                        shutil.copy2(sfile, dfile)
+                                    except Exception as e:
+                                        self.emit('task_progress', {'task': 'restore', 'log': f'❌ Hiba ({f}): {e}'})
+                            self.emit('task_progress', {'task': 'restore', 'log': '  ✅ Fallback másolás befejeződött.'})
+                    
                     try:
                         if os.path.exists(new_format_repo):
-                            self.emit('task_progress', {'task': 'restore', 'log': 'FileRepository és INF mappák fizikai másolásának megkezdése (Új formátum)...'})
-                            shutil.copytree(new_format_repo, target_repo, dirs_exist_ok=True)
+                            self.emit('task_progress', {'task': 'restore', 'log': 'FileRepository és INF mappák kényszerített fizikai másolásának megkezdése (Új formátum)...'})
+                            force_copy(new_format_repo, target_repo)
                             if os.path.exists(new_format_inf):
-                                shutil.copytree(new_format_inf, target_inf, dirs_exist_ok=True)
+                                force_copy(new_format_inf, target_inf)
                         else:
-                            self.emit('task_progress', {'task': 'restore', 'log': 'DriverStore fizikai másolása (Régi formátum)...'})
-                            shutil.copytree(norm_source, target_repo, dirs_exist_ok=True)
+                            self.emit('task_progress', {'task': 'restore', 'log': 'DriverStore fizikai másolása...'})
+                            force_copy(norm_source, target_repo)
                         
                         self.emit('task_progress', {'task': 'restore', 'log': '✅ Fizikai másolás kész, eredeti gyári állapot helyreállítva!'})
                     except Exception as e:
-                        self.emit('task_progress', {'task': 'restore', 'log': f'⚠ Másolási hiba: {e}'})
+                        err_msg = str(e)
+                        if len(err_msg) > 300: err_msg = err_msg[:300] + "... (üzenet csonkítva)"
+                        self.emit('task_progress', {'task': 'restore', 'log': f'⚠️ Másolási hiba: {err_msg}'})
                 else:
                     scratch = os.path.join(norm_target, "Scratch")
                     os.makedirs(scratch, exist_ok=True)
