@@ -349,7 +349,8 @@ td input[type="checkbox"]{accent-color:var(--accent)}
       <div class="modal-time" id="mp-time"></div>
       <div class="modal-log" id="mp-log"></div>
     </div>
-    <div class="modal-footer">
+    <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+      <button class="btn btn-danger" id="mp-cancel-btn" onclick="cancelTask()">🛑 Törlés/Folyamat Leállítása</button>
       <button class="btn" id="mp-close-btn" onclick="closeProgressModal()" style="display:none">Bezárás</button>
     </div>
   </div>
@@ -434,6 +435,8 @@ window.handlePyEvent = function(payload) {
       if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
       appendLog('❌ HIBA: ' + (data.error || 'Ismeretlen hiba'));
       document.getElementById('mp-close-btn').style.display = '';
+      const ceBtn = document.getElementById('mp-cancel-btn');
+      if (ceBtn) ceBtn.style.display = 'none';
       break;
     case 'hw_scan_progress':
       updateHwScanProgress(data);
@@ -717,6 +720,12 @@ function showProgressModal(title, phase) {
   document.getElementById('mp-progress-fill').style.width = '0%';
   document.getElementById('mp-progress').classList.remove('progress-indeterminate');
   document.getElementById('mp-close-btn').style.display = 'none';
+  const cBtn = document.getElementById('mp-cancel-btn');
+  if (cBtn) {
+    cBtn.style.display = 'inline-block';
+    cBtn.disabled = false;
+    cBtn.textContent = '🛑 Törlés/Folyamat Leállítása';
+  }
   document.getElementById('modal-progress').classList.add('active');
   progressStartTime = Date.now();
   if (progressTimer) clearInterval(progressTimer);
@@ -754,6 +763,8 @@ function onTaskComplete(data) {
   document.getElementById('mp-progress').classList.remove('progress-indeterminate');
   document.getElementById('mp-progress-fill').style.width = '100%';
   document.getElementById('mp-close-btn').style.display = '';
+  const cBtn = document.getElementById('mp-cancel-btn');
+  if (cBtn) cBtn.style.display = 'none';
   if (data.log) appendLog(data.log);
   if (data.status) document.getElementById('mp-status').textContent = data.status;
   if (data.counter) document.getElementById('mp-counter').textContent = data.counter;
@@ -766,6 +777,18 @@ function onTaskComplete(data) {
     document.getElementById('btn-autofix').textContent = '⚡ INDÍTÁS: Teljes Driver Újratelepítés ⚡';
   }
 }
+async function cancelTask() {
+  const ok = await showConfirm('Folyamat megszakítása', 'Biztosan leállítod a folyamatot?');
+  if (ok) {
+    const cBtn = document.getElementById('mp-cancel-btn');
+    if (cBtn) {
+      cBtn.disabled = true;
+      cBtn.textContent = '⏳ Megszakítás folyamatban...';
+    }
+    await api().cancel_task();
+  }
+}
+
 function closeProgressModal() {
   document.getElementById('modal-progress').classList.remove('active');
   if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }

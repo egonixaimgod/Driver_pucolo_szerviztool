@@ -1,4 +1,4 @@
-BUILD_NUMBER = 37
+BUILD_NUMBER = 38
 
 import os
 import sys
@@ -110,6 +110,11 @@ class DriverToolApi:
     # ================================================================
     def get_init_data(self):
         return {'build': BUILD_NUMBER, 'sys_drive': self.sys_drive, 'target_os': self.target_os_path}
+
+    def cancel_task(self):
+        """API hívás a hosszan tartó műveletek (pl. törlés) megszakítására."""
+        self._cancel_flag = True
+        return True
 
     def change_target_os(self):
         result = self._window.create_file_dialog(_FOLDER_DIALOG, allow_multiple=False)
@@ -266,6 +271,7 @@ class DriverToolApi:
     # DRIVER DELETION
     # ================================================================
     def delete_drivers(self, published_names, list_all=False):
+        self._cancel_flag = False
         def worker():
             total = len(published_names)
             success = 0
@@ -274,6 +280,11 @@ class DriverToolApi:
             self.emit('task_progress', {'task': 'delete', 'log': f'Kijelölt driverek törlése indult ({total} db)'})
 
             for i, pub in enumerate(published_names):
+                if getattr(self, '_cancel_flag', False):
+                    self.emit('task_progress', {'task': 'delete', 'log': '❗ Törlés megszakítva a felhasználó által!'})
+                    self.emit('task_progress', {'status': '❗ Megszakítva!', 'counter': f'{i} / {total}'})
+                    break
+                
                 self.emit('task_progress', {
                     'task': 'delete', 'current': i, 'total': total,
                     'status': f'Törlés: {pub}', 'counter': f'{i+1} / {total}',
