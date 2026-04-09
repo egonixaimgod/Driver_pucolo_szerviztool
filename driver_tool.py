@@ -1,4 +1,4 @@
-BUILD_NUMBER = 39
+BUILD_NUMBER = 40
 
 import os
 import sys
@@ -76,6 +76,14 @@ class DriverToolApi:
             time.sleep(0.1)
 
     def emit(self, event, data=None):
+        try:
+            if isinstance(data, dict):
+                log_msg = data.get('log') or data.get('status') or data.get('error')
+                if log_msg:
+                    logging.info(f"[{event}] {str(log_msg).strip()}")
+        except:
+            pass
+
         if self._window:
             try:
                 payload = json.dumps({"event": event, "data": data}, ensure_ascii=False, default=str)
