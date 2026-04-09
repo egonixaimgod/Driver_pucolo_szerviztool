@@ -1,4 +1,4 @@
-BUILD_NUMBER = 30
+BUILD_NUMBER = 31
 
 import os
 import sys
@@ -1299,24 +1299,7 @@ try {
             norm_target = os.path.normpath(target) if target else None
             is_inbox = not online and "Windows_Gyari_Alap_Driverek" in norm_source
 
-            if is_inbox:
-                self.emit('task_progress', {'task': 'restore', 'log': 'Gyári inbox driverek — közvetlen FileRepository másolás'})
-                target_repo = os.path.join(norm_target, "Windows", "System32", "DriverStore", "FileRepository")
-                os.makedirs(target_repo, exist_ok=True)
-                copied = 0
-                for item in os.listdir(norm_source):
-                    src = os.path.join(norm_source, item)
-                    dst = os.path.join(target_repo, item)
-                    try:
-                        if os.path.isdir(src):
-                            shutil.copytree(src, dst, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(src, dst)
-                        copied += 1
-                    except Exception as e:
-                        self.emit('task_progress', {'task': 'restore', 'log': f'  ⚠ {item}: {e}'})
-                self.emit('task_progress', {'task': 'restore', 'log': f'✅ {copied} elem másolva'})
-            elif online:
+            if online:
                 cmd = ['pnputil', '/add-driver', f"{norm_source}\\*.inf", '/subdirs', '/install']
                 self.emit('task_progress', {'task': 'restore', 'log': f'Parancs: {" ".join(cmd)}'})
                 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -1326,6 +1309,8 @@ try {
                 process.wait()
                 self.emit('task_progress', {'task': 'restore', 'log': f'\nReturn code: {process.returncode}'})
             else:
+                if is_inbox:
+                    self.emit('task_progress', {'task': 'restore', 'log': 'Gyári inbox driverek injektálása (DISM) - Ez eltarthat 10-20 percig!'})
                 scratch = os.path.join(norm_target, "Scratch")
                 os.makedirs(scratch, exist_ok=True)
                 cmd = ['dism', f'/Image:{norm_target}', '/Add-Driver', f'/Driver:{norm_source}', '/Recurse', '/ForceUnsigned', f'/ScratchDir:{scratch}']
