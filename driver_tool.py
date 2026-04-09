@@ -1,4 +1,4 @@
-BUILD_NUMBER = 41
+BUILD_NUMBER = 43
 
 import os
 import sys
@@ -1282,12 +1282,18 @@ try {
                 self.emit('task_progress', {'task': 'backup', 'current': i + 1, 'total': len(all_infs),
                                             'counter': f'{i+1}/{len(all_infs)}', 'status': f'Export: {inf}'})
 
-            # Copy inbox drivers
-            self.emit('task_progress', {'task': 'backup', 'log': 'Windows inbox driverek másolása...', 'indeterminate': True})
+            # Copy inbox drivers (FileRepository + INF)
+            self.emit('task_progress', {'task': 'backup', 'log': 'Windows inbox driverek másolása (FileRepository)...', 'indeterminate': True})
             driverstore = os.path.join(os.environ.get('SYSTEMROOT', r'C:\Windows'), 'System32', 'DriverStore', 'FileRepository')
             inbox_folder = os.path.join(folder, '_Windows_Inbox_Drivers')
             os.makedirs(inbox_folder, exist_ok=True)
             self._run(['robocopy', driverstore, inbox_folder, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP'])
+
+            self.emit('task_progress', {'task': 'backup', 'log': 'Windows INF mappa másolása...'})
+            inf_src = os.path.join(os.environ.get('SYSTEMROOT', r'C:\Windows'), 'INF')
+            inbox_inf_folder = os.path.join(folder, '_Windows_Inbox_INF')
+            os.makedirs(inbox_inf_folder, exist_ok=True)
+            self._run(['robocopy', inf_src, inbox_inf_folder, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP'])
 
             total_size = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fns in os.walk(folder) for f in fns
                              if os.path.exists(os.path.join(dp, f)))
@@ -1365,7 +1371,60 @@ try {
 
             norm_source = os.path.normpath(source)
             norm_target = os.path.normpath(target) if target else None
-            is_inbox = not online and "Windows_Gyari_Alap_Driverek" in norm_source
+
+            # Detect source type
+            is_wim_extract = not online and "Windows_Gyari_Alap_Driverek" in norm_source
+            inbox_subfolder = os.path.join(norm_source, "_Windows_Inbox_Drivers") if not online else None
+            has_inbox_subfolder = inbox_subfolder and os.path.isdir(inbox_subfolder)
+
+            def force_copy(src, dst):
+                """Robocopy-based forced copy with fallback for inbox/system drivers."""
+                if not os.path.exists(src):
+                    return
+                os.makedirs(dst, exist_ok=True)
+                self.emit('task_progress', {'task': 'restore', 'log': f'\n  Robocopy indul: {os.path.basename(src)} -> {os.path.basename(dst)}\n  (Backup mód - Windows jogosultságok megkerülése)'})
+                cmd = ['robocopy', src, dst, '/E', '/ZB', '/R:1', '/W:1', '/COPY:DAT', '/NC', '/NS', '/NFL', '/NDL', '/NP']
+                res = self._run(cmd)
+
+                if res.returncode < 8:
+                    self.emit('task_progress', {'task': 'restore', 'log': f'  ✅ Sikeres robocopy kényszerítés ({res.returncode})'})
+                else:
+                    self.emit('task_progress', {'task': 'restore', 'log': f'  ⚠️ Robocopy hiba ({res.returncode}), végső tartalék: mappánkénti jogszerzés (lassabb)...'})
+                    for root, _, files in os.walk(src):
+                        if getattr(self, '_cancel_flag', False): return
+                        rel = os.path.relpath(root, src)
+                        target_dir = os.path.join(dst, rel) if rel != '.' else dst
+                        os.makedirs(target_dir, exist_ok=True)
+
+                        for f in files:
+                            if getattr(self, '_cancel_flag', False): return
+                            sfile = os.path.join(root, f)
+                            dfile = os.path.join(target_dir, f)
+                            if os.path.exists(dfile):
+                                self._run(f'takeown /f "{dfile}" /A', shell=True)
+                                self._run(f'icacls "{dfile}" /grant *S-1-5-32-544:F', shell=True)
+                                self._run(f'attrib -R "{dfile}"', shell=True)
+                            try:
+                                shutil.copy2(sfile, dfile)
+                            except Exception as e:
+                                self.emit('task_progress', {'task': 'restore', 'log': f'❌ Hiba ({f}): {e}'})
+                    self.emit('task_progress', {'task': 'restore', 'log': '  ✅ Fallback másolás befejeződött.'})
+
+            def run_dism_add_driver(driver_path, label=""):
+                """Run DISM /Add-Driver on a folder with /Recurse."""
+                scratch = os.path.join(norm_target, "Scratch")
+                os.makedirs(scratch, exist_ok=True)
+                cmd = ['dism', f'/Image:{norm_target}', '/Add-Driver', f'/Driver:{driver_path}', '/Recurse', '/ForceUnsigned', f'/ScratchDir:{scratch}']
+                self.emit('task_progress', {'task': 'restore', 'log': f'{label}Parancs: {" ".join(cmd)}'})
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                           startupinfo=self._si, creationflags=self._nw, errors='replace')
+                for line in process.stdout:
+                    stripped = line.strip()
+                    if stripped:
+                        self.emit('task_progress', {'task': 'restore', 'log': stripped})
+                process.wait()
+                self.emit('task_progress', {'task': 'restore', 'log': f'Return code: {process.returncode}'})
+                return process.returncode
 
             if online:
                 cmd = ['pnputil', '/add-driver', f"{norm_source}\\*.inf", '/subdirs', '/install']
@@ -1376,72 +1435,101 @@ try {
                     self.emit('task_progress', {'task': 'restore', 'log': line.strip()})
                 process.wait()
                 self.emit('task_progress', {'task': 'restore', 'log': f'\nReturn code: {process.returncode}'})
-            else:
-                if is_inbox:
-                    self.emit('task_progress', {'task': 'restore', 'log': 'Gyári beépített driverek natív visszafűzése (Másolás az eredeti helyre)...'})
-                    new_format_repo = os.path.join(norm_source, "FileRepository")
-                    new_format_inf = os.path.join(norm_source, "INF")
-                    target_repo = os.path.join(norm_target, "Windows", "System32", "DriverStore", "FileRepository")
-                    target_inf = os.path.join(norm_target, "Windows", "INF")
-                    
-                    def force_copy(src, dst):
-                        if not os.path.exists(src):
-                            return
-                        os.makedirs(dst, exist_ok=True)
-                        self.emit('task_progress', {'task': 'restore', 'log': f'\n  Robocopy indul: {os.path.basename(src)} -> {os.path.basename(dst)}\n  (Backup mód - Windows jogosultságok megkerülése)'})
-                        cmd = ['robocopy', src, dst, '/E', '/ZB', '/R:1', '/W:1', '/COPY:DAT', '/NC', '/NS', '/NFL', '/NDL', '/NP']
-                        res = self._run(cmd)
-                        
-                        if res.returncode < 8:
-                            self.emit('task_progress', {'task': 'restore', 'log': f'  ✅ Sikeres robocopy kényszerítés ({res.returncode})'})
-                        else:
-                            self.emit('task_progress', {'task': 'restore', 'log': f'  ⚠️ Robocopy hiba ({res.returncode}), végső tartalék: mappánkénti jogszerzés (lassabb)...'})
-                            for root, _, files in os.walk(src):
-                                if getattr(self, '_cancel_flag', False): return
-                                rel = os.path.relpath(root, src)
-                                target_dir = os.path.join(dst, rel) if rel != '.' else dst
-                                os.makedirs(target_dir, exist_ok=True)
-                                
-                                for f in files:
-                                    if getattr(self, '_cancel_flag', False): return
-                                    sfile = os.path.join(root, f)
-                                    dfile = os.path.join(target_dir, f)
-                                    if os.path.exists(dfile):
-                                        self._run(f'takeown /f "{dfile}" /A', shell=True)
-                                        self._run(f'icacls "{dfile}" /grant *S-1-5-32-544:F', shell=True)
-                                        self._run(f'attrib -R "{dfile}"', shell=True)
+            elif is_wim_extract:
+                # WIM-ből kimentett driverek (Windows_Gyari_Alap_Driverek_*)
+                # Ezek FileRepository + INF formátumban vannak
+                self.emit('task_progress', {'task': 'restore', 'log': 'WIM-ből kimentett gyári driverek visszaállítása...'})
+                new_format_repo = os.path.join(norm_source, "FileRepository")
+                new_format_inf = os.path.join(norm_source, "INF")
+                target_repo = os.path.join(norm_target, "Windows", "System32", "DriverStore", "FileRepository")
+                target_inf = os.path.join(norm_target, "Windows", "INF")
+
+                try:
+                    if os.path.exists(new_format_repo):
+                        self.emit('task_progress', {'task': 'restore', 'log': '1/2 FileRepository és INF fizikai másolása...'})
+                        force_copy(new_format_repo, target_repo)
+                        if os.path.exists(new_format_inf):
+                            force_copy(new_format_inf, target_inf)
+                    else:
+                        self.emit('task_progress', {'task': 'restore', 'log': '1/2 DriverStore fizikai másolása...'})
+                        force_copy(norm_source, target_repo)
+
+                    self.emit('task_progress', {'task': 'restore', 'log': '✅ Fizikai másolás kész!'})
+                except Exception as e:
+                    err_msg = str(e)
+                    if len(err_msg) > 300: err_msg = err_msg[:300] + "..."
+                    self.emit('task_progress', {'task': 'restore', 'log': f'⚠️ Másolási hiba: {err_msg}'})
+
+                # DISM regisztrálás a fizikai másolás után
+                self.emit('task_progress', {'task': 'restore', 'log': '\n2/2 DISM driver regisztrálás (inbox drivereknél sok hiba normális)...'})
+                run_dism_add_driver(norm_source, "")
+                self.emit('task_progress', {'task': 'restore', 'log': '✅ A fizikai másolás + DISM regisztrálás kész. Az inbox driverek a másolásnak köszönhetően elérhetőek.'})
+
+            elif has_inbox_subfolder:
+                # ALL_Driver_Backup_* formátum: _Windows_Inbox_Drivers + oem almanák
+                self.emit('task_progress', {'task': 'restore', 'log': 'ALL_Driver_Backup formátum észlelve.\n'
+                                            'Az inbox drivereket fizikailag másoljuk (DISM nem tudja telepíteni őket),\n'
+                                            'az OEM drivereket DISM-mel regisztráljuk.\n'})
+
+                # 1) Inbox driverek fizikai másolása (FileRepository + INF)
+                target_repo = os.path.join(norm_target, "Windows", "System32", "DriverStore", "FileRepository")
+                target_inf = os.path.join(norm_target, "Windows", "INF")
+                inbox_inf_subfolder = os.path.join(norm_source, "_Windows_Inbox_INF")
+                self.emit('task_progress', {'task': 'restore', 'log': '--- 1. LÉPÉS: Inbox driverek fizikai másolása a DriverStore-ba ---'})
+                try:
+                    force_copy(inbox_subfolder, target_repo)
+                    if os.path.isdir(inbox_inf_subfolder):
+                        self.emit('task_progress', {'task': 'restore', 'log': 'Windows INF mappa visszamásolása (új formátumú backup)...'})
+                        force_copy(inbox_inf_subfolder, target_inf)
+                    else:
+                        # Régi backup: nincs _Windows_Inbox_INF, ezért a FileRepository almappáiból
+                        # kiszedjük az .inf fájlokat és bemásoljuk a Windows\INF-be
+                        self.emit('task_progress', {'task': 'restore', 'log': 'Régi backup formátum: _Windows_Inbox_INF nem található.\n'
+                                                    'INF fájlok kinyerése a FileRepository almappáiból...'})
+                        os.makedirs(target_inf, exist_ok=True)
+                        inf_count = 0
+                        for repo_dir in os.listdir(inbox_subfolder):
+                            repo_path = os.path.join(inbox_subfolder, repo_dir)
+                            if not os.path.isdir(repo_path):
+                                continue
+                            for fname in os.listdir(repo_path):
+                                if fname.lower().endswith('.inf'):
+                                    src_inf = os.path.join(repo_path, fname)
+                                    dst_inf = os.path.join(target_inf, fname)
                                     try:
-                                        shutil.copy2(sfile, dfile)
-                                    except Exception as e:
-                                        self.emit('task_progress', {'task': 'restore', 'log': f'❌ Hiba ({f}): {e}'})
-                            self.emit('task_progress', {'task': 'restore', 'log': '  ✅ Fallback másolás befejeződött.'})
-                    
-                    try:
-                        if os.path.exists(new_format_repo):
-                            self.emit('task_progress', {'task': 'restore', 'log': 'FileRepository és INF mappák kényszerített fizikai másolásának megkezdése (Új formátum)...'})
-                            force_copy(new_format_repo, target_repo)
-                            if os.path.exists(new_format_inf):
-                                force_copy(new_format_inf, target_inf)
-                        else:
-                            self.emit('task_progress', {'task': 'restore', 'log': 'DriverStore fizikai másolása...'})
-                            force_copy(norm_source, target_repo)
-                        
-                        self.emit('task_progress', {'task': 'restore', 'log': '✅ Fizikai másolás kész, eredeti gyári állapot helyreállítva!'})
-                    except Exception as e:
-                        err_msg = str(e)
-                        if len(err_msg) > 300: err_msg = err_msg[:300] + "... (üzenet csonkítva)"
-                        self.emit('task_progress', {'task': 'restore', 'log': f'⚠️ Másolási hiba: {err_msg}'})
+                                        shutil.copy2(src_inf, dst_inf)
+                                        inf_count += 1
+                                    except Exception:
+                                        pass
+                        self.emit('task_progress', {'task': 'restore', 'log': f'✅ {inf_count} db .inf fájl kinyerve a Windows\\INF mappába (.pnf-eket a Windows legenerálja bootoláskor).'})
+                    self.emit('task_progress', {'task': 'restore', 'log': '✅ Inbox driverek fizikai másolása kész!'})
+                except Exception as e:
+                    err_msg = str(e)
+                    if len(err_msg) > 300: err_msg = err_msg[:300] + "..."
+                    self.emit('task_progress', {'task': 'restore', 'log': f'⚠️ Inbox másolási hiba: {err_msg}'})
+
+                # 2) OEM driverek DISM-mel (almappák, amik nem _Windows_Inbox_Drivers)
+                oem_folders = []
+                for item in os.listdir(norm_source):
+                    item_path = os.path.join(norm_source, item)
+                    if os.path.isdir(item_path) and item not in ("_Windows_Inbox_Drivers", "_Windows_Inbox_INF"):
+                        # Check if folder contains any .inf files (directly or in subfolders)
+                        has_inf = any(f.lower().endswith('.inf') for _, _, fns in os.walk(item_path) for f in fns)
+                        if has_inf:
+                            oem_folders.append(item_path)
+
+                if oem_folders:
+                    self.emit('task_progress', {'task': 'restore', 'log': f'\n--- 2. LÉPÉS: {len(oem_folders)} db OEM driver mappa DISM regisztrálása ---'})
+                    for i, oem_path in enumerate(oem_folders):
+                        self.emit('task_progress', {'task': 'restore', 'log': f'\n[{i+1}/{len(oem_folders)}] {os.path.basename(oem_path)}:'})
+                        run_dism_add_driver(oem_path, "  ")
+                    self.emit('task_progress', {'task': 'restore', 'log': '\n✅ OEM driverek DISM regisztrálása kész!'})
                 else:
-                    scratch = os.path.join(norm_target, "Scratch")
-                    os.makedirs(scratch, exist_ok=True)
-                    cmd = ['dism', f'/Image:{norm_target}', '/Add-Driver', f'/Driver:{norm_source}', '/Recurse', '/ForceUnsigned', f'/ScratchDir:{scratch}']
-                    self.emit('task_progress', {'task': 'restore', 'log': f'Parancs: {" ".join(cmd)}'})
-                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                               startupinfo=self._si, creationflags=self._nw, errors='replace')
-                    for line in process.stdout:
-                        self.emit('task_progress', {'task': 'restore', 'log': line.strip()})
-                    process.wait()
-                    self.emit('task_progress', {'task': 'restore', 'log': f'\nReturn code: {process.returncode}'})
+                    self.emit('task_progress', {'task': 'restore', 'log': '\nNincs OEM driver mappa a backup-ban.'})
+
+            else:
+                # Egyéb mappa (pl. Driver_Backup_* third-party export) — tisztán DISM
+                run_dism_add_driver(norm_source, "")
 
             # Post-install
             if online:
@@ -1452,7 +1540,7 @@ try {
                     self._run(['pnputil', '/scan-devices'])
                     time.sleep(3.5)
                     self.emit('task_progress', {'task': 'restore', 'log': '✅ Scan kész!'})
-            elif not is_inbox:
+            else:
                 # Automata PnP rescan beállítása az asztal betöltésére
                 self.emit('task_progress', {'task': 'restore', 'log': 'Első bejelentkezési rescan script beállítása...'})
                 startup_dir = os.path.join(target, "ProgramData", "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
