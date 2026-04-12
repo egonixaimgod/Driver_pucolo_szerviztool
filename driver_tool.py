@@ -1,4 +1,4 @@
-BUILD_NUMBER = 43
+BUILD_NUMBER = 45
 
 import os
 import sys
@@ -60,6 +60,7 @@ class DriverToolApi:
         self._hw_scanning = False
         self._hw_loaded = False
         self.wu_api_mode = True
+        self._cancel_flag = False  # Flag for cancelling long-running tasks
         self._si = subprocess.STARTUPINFO()
         self._si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         self._nw = subprocess.CREATE_NO_WINDOW
@@ -122,7 +123,12 @@ class DriverToolApi:
     def cancel_task(self):
         """API hívás a hosszan tartó műveletek (pl. törlés) megszakítására."""
         self._cancel_flag = True
+        self.emit('toast', {'message': '⚠️ Megszakítás kérve...', 'type': 'warning'})
         return True
+
+    def _check_cancel(self):
+        """Ellenőrzi, hogy a felhasználó megszakította-e a műveletet."""
+        return getattr(self, '_cancel_flag', False)
 
     def change_target_os(self):
         result = self._window.create_file_dialog(_FOLDER_DIALOG, allow_multiple=False)
@@ -682,6 +688,7 @@ try {
     # WU DRIVER INSTALL
     # ================================================================
     def install_selected_wu(self, selected_indices):
+        self._cancel_flag = False  # Reset cancel flag
         selected_pool = [self.hw_updates_pool[i] for i in selected_indices if 0 <= i < len(self.hw_updates_pool)]
         if not selected_pool:
             return
@@ -755,6 +762,11 @@ try {
             install_total = 0
 
             for line in process.stdout:
+                if self._check_cancel():
+                    process.terminate()
+                    self.emit('task_progress', {'task': 'wu_install', 'log': '\n❗ Megszakítva!'})
+                    self.emit('task_complete', {'task': 'wu_install', 'status': '❗ Megszakítva!', 'success': success, 'fail': fail})
+                    return
                 line = line.strip()
                 if not line:
                     continue
@@ -818,6 +830,10 @@ try {
 
             try:
                 for i, drv in enumerate(selected_pool):
+                    if self._check_cancel():
+                        self.emit('task_progress', {'task': 'wu_install', 'log': '\n❗ Megszakítva!'})
+                        self.emit('task_complete', {'task': 'wu_install', 'status': '❗ Megszakítva!', 'success': success, 'fail': i - success})
+                        return
                     name = drv['name']
                     url = drv.get('url', '')
                     if not url:
@@ -874,6 +890,7 @@ try {
     # AUTOFIX
     # ================================================================
     def start_autofix(self):
+        self._cancel_flag = False  # Reset cancel flag
         def worker():
             overall_start = time.time()
 
@@ -881,6 +898,13 @@ try {
                 s = int(time.time() - overall_start)
                 m, sec = divmod(s, 60)
                 return f"{m:02d}:{sec:02d}"
+
+            def check_cancel():
+                if self._check_cancel():
+                    self.emit('task_progress', {'task': 'autofix', 'log': '\n❗ Megszakítva a felhasználó által!'})
+                    self.emit('task_complete', {'task': 'autofix', 'status': '❗ Megszakítva!', 'counter': 'Megszakítva'})
+                    return True
+                return False
 
             self.emit('task_start', {'task': 'autofix', 'title': '⚡ 1 Kattintásos Driver Fix'})
 
@@ -911,6 +935,8 @@ try {
             self._run('net stop wuauserv & net start wuauserv', shell=True)
             self.emit('task_progress', {'task': 'autofix', 'log': '  ✅ WU szolgáltatás újraindítva\n\n✅ WU letiltás kész!\n',
                                         'current': 4, 'total': 4})
+            
+            if check_cancel(): return
 
             # PHASE 2: Delete third-party drivers
             self.emit('task_progress', {'task': 'autofix', 'phase': '🔴 2. FÁZIS: Driver törlés',
@@ -921,6 +947,7 @@ try {
             del_success = 0
             del_fail = 0
             for i, drv in enumerate(drivers):
+                if check_cancel(): return
                 pub = drv.get("published", "?")
                 prov = drv.get("provider", "")
                 self.emit('task_progress', {'task': 'autofix', 'status': f'Törlés: {pub}', 'log': f'  🗑 {pub} [{prov}]'})
@@ -940,6 +967,8 @@ try {
 
             self.emit('task_progress', {'task': 'autofix', 'log': f'\n--- Törlés kész. Sikeres: {del_success}, Sikertelen: {del_fail} ---\n'})
 
+            if check_cancel(): return
+
             # PHASE 3: Hardware rescan
             self.emit('task_progress', {'task': 'autofix', 'phase': '🟡 3. FÁZIS: Hardver scan',
                                         'log': '=' * 50 + '\nFÁZIS 3: pnputil /scan-devices...', 'indeterminate': True})
@@ -949,6 +978,8 @@ try {
                 self.emit('task_progress', {'task': 'autofix', 'log': '✅ Hardver scan kész!'})
             except Exception:
                 self.emit('task_progress', {'task': 'autofix', 'log': '⚠ Scan timeout/hiba — folytatás...'})
+
+            if check_cancel(): return
 
             # PHASE 4+5: WU search & install (single PS process)
             self.emit('task_progress', {'task': 'autofix', 'phase': '🟠 4. FÁZIS: Driver keresés + telepítés (WU szerverekről)',
@@ -1037,10 +1068,13 @@ try {
                 self._run(['pnputil', '/scan-devices'])
                 self.emit('task_progress', {'task': 'autofix', 'log': '✅ Eszközök frissítve!'})
 
+            if check_cancel(): return
+
             # PHASE 6: Reboot
             self.emit('task_progress', {'task': 'autofix', 'phase': '🔵 6. FÁZIS: Újraindítás',
                                         'log': f'\n{"=" * 50}\nFÁZIS 6: Újraindítás 30 másodperc múlva!\n\n⚡ Teljes idő: {elapsed()}'})
             for c in range(30, 0, -1):
+                if check_cancel(): return
                 self.emit('task_progress', {'task': 'autofix', 'counter': f'Újraindítás {c} mp múlva...', 'current': 30 - c, 'total': 30})
                 time.sleep(1)
 
