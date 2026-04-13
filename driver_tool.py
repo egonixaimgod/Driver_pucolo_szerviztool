@@ -1,4 +1,4 @@
-BUILD_NUMBER = 47
+BUILD_NUMBER = 53
 
 import os
 import sys
@@ -81,6 +81,15 @@ class DriverToolApi:
                 if i == 49:
                     logging.warning(f"[WINDOW] WebView2 DOM nem reagál: {e}")
             time.sleep(0.1)
+
+    def trigger_display_recovery(self):
+        """Kényszeríti a WebView újrarajzolását a display driver reset után."""
+        if self._window:
+            try:
+                self._window.evaluate_js('displayRecoveryPending = true; if(typeof forceRedraw === "function") forceRedraw();')
+                logging.debug("[RECOVERY] Display recovery trigger elküldve")
+            except Exception as e:
+                logging.debug(f"[RECOVERY] Trigger hiba (várható driver reset közben): {e}")
 
     def emit(self, event, data=None):
         # Log minden emit event-et
@@ -382,6 +391,8 @@ class DriverToolApi:
                         res = self._run(['dism', f'/Image:{self.target_os_path}', '/Remove-Driver', f'/Driver:{pub}'])
                     elif not is_offline:
                         res = self._run(['pnputil', '/delete-driver', pub, '/uninstall', '/force'])
+                        # Trigger display recovery after driver delete (GPU driver may cause white screen)
+                        self.trigger_display_recovery()
                     else:
                         class DummyRes:
                             returncode = 1
@@ -436,6 +447,12 @@ class DriverToolApi:
                     fail += 1
                     self.emit('task_progress', {'task': 'delete', 'log': f'  ❌ {pub} hiba: {e}'})
 
+            # Display recovery after driver deletions
+            logging.info("[DELETE] Driver törlések befejezve, display recovery indítása...")
+            for _ in range(5):
+                self.trigger_display_recovery()
+                time.sleep(0.5)
+
             # Post-delete scan
             is_offline = bool(self.target_os_path)
             is_pe = os.environ.get('SystemDrive', 'C:') == 'X:'
@@ -443,6 +460,10 @@ class DriverToolApi:
                 self.emit('task_progress', {'task': 'delete', 'log': 'Hardverek újraszkennelése...', 'status': 'Hardverek újraszkennelése...'})
                 self._run(['pnputil', '/scan-devices'])
                 time.sleep(3)
+                # Recovery after hardware scan
+                for _ in range(3):
+                    self.trigger_display_recovery()
+                    time.sleep(0.3)
                 self.emit('task_progress', {'task': 'delete', 'log': '✅ Hardverek frissítve!'})
 
             self.emit('task_progress', {'task': 'delete', 'log': f'\n--- Sikeres: {success}, Sikertelen: {fail} ---', 'current': total, 'total': total})
@@ -1077,6 +1098,8 @@ try {
                 self.emit('task_progress', {'task': 'autofix', 'status': f'Törlés: {pub}', 'log': f'  🗑 {pub} [{prov}]'})
                 try:
                     res = self._run(['pnputil', '/delete-driver', pub, '/uninstall', '/force'])
+                    # Trigger display recovery after driver delete (GPU driver may cause white screen)
+                    self.trigger_display_recovery()
                     if res.returncode == 0 or any(k in res.stdout for k in ["Deleted", "törölve", "successfully"]):
                         del_success += 1
                         self.emit('task_progress', {'task': 'autofix', 'log': f'    ✅ törölve'})
@@ -1090,6 +1113,12 @@ try {
                                             'counter': f'{i+1}/{del_total} (✅{del_success} ❌{del_fail})'})
 
             self.emit('task_progress', {'task': 'autofix', 'log': f'\n--- Törlés kész. Sikeres: {del_success}, Sikertelen: {del_fail} ---\n'})
+            
+            # Extra display recovery after all driver deletions
+            logging.info("[AUTOFIX] Driver törlések befejezve, display recovery indítása...")
+            for _ in range(5):
+                self.trigger_display_recovery()
+                time.sleep(0.5)
 
             if check_cancel(): return
 
@@ -1099,6 +1128,10 @@ try {
             try:
                 self._run(['pnputil', '/scan-devices'], timeout=120)
                 time.sleep(5)
+                # Recovery after hardware scan (new GPU driver may have been installed)
+                for _ in range(3):
+                    self.trigger_display_recovery()
+                    time.sleep(0.3)
                 self.emit('task_progress', {'task': 'autofix', 'log': '✅ Hardver scan kész!'})
             except Exception:
                 self.emit('task_progress', {'task': 'autofix', 'log': '⚠ Scan timeout/hiba — folytatás...'})

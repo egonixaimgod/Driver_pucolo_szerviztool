@@ -396,6 +396,108 @@ let progressStartTime = 0;
 let progressTimer = null;
 let currentTask = null;  // Track current running task
 
+/* ========== DISPLAY DRIVER RESET RECOVERY ========== */
+// Amikor a GPU driver eltávolításra kerül/reset, a WebView2 renderelés "fehér" maradhat.
+// Ez a rész érzékeli és helyreállítja a megjelenítést.
+let displayRecoveryPending = false;
+let lastRecoveryTime = 0;
+
+function forceRedraw() {
+  const now = Date.now();
+  if (now - lastRecoveryTime < 100) return;
+  lastRecoveryTime = now;
+  
+  // Method 1: Force layout recalculation
+  document.body.style.display = 'none';
+  document.body.offsetHeight;
+  document.body.style.display = '';
+  
+  // Method 2: CSS transform trick
+  document.documentElement.style.transform = 'translateZ(0)';
+  requestAnimationFrame(() => { document.documentElement.style.transform = ''; });
+  
+  // Method 3: Resize trick
+  const app = document.querySelector('.app');
+  if (app) {
+    const origMinHeight = app.style.minHeight;
+    app.style.minHeight = (window.innerHeight - 1) + 'px';
+    requestAnimationFrame(() => { app.style.minHeight = origMinHeight; });
+  }
+  
+  // Method 4: Opacity change
+  document.body.style.opacity = '0.999';
+  requestAnimationFrame(() => { document.body.style.opacity = ''; });
+  
+  console.log('[RECOVERY] Force redraw végrehajtva');
+}
+
+// Visibility change - képernyő "visszajön" driver reset után
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && displayRecoveryPending) {
+    console.log('[RECOVERY] Tab visible, recovery...');
+    setTimeout(forceRedraw, 100);
+    setTimeout(forceRedraw, 500);
+    setTimeout(forceRedraw, 1500);
+    setTimeout(forceRedraw, 3000);
+    displayRecoveryPending = false;
+  }
+  if (document.hidden) displayRecoveryPending = true;
+});
+
+// Focus event
+window.addEventListener('focus', () => {
+  if (displayRecoveryPending || currentTask) {
+    console.log('[RECOVERY] Window focus, recovery...');
+    setTimeout(forceRedraw, 50);
+    setTimeout(forceRedraw, 300);
+    setTimeout(forceRedraw, 1000);
+    displayRecoveryPending = false;
+  }
+});
+
+// Resize event - GPU reset után gyakran jön
+let lastResizeRecovery = 0;
+window.addEventListener('resize', () => {
+  const now = Date.now();
+  if (currentTask && now - lastResizeRecovery > 500) {
+    lastResizeRecovery = now;
+    console.log('[RECOVERY] Window resize during task...');
+    setTimeout(forceRedraw, 50);
+    setTimeout(forceRedraw, 200);
+  }
+});
+
+// Periodikus recovery task közben - MINDEN MÁSODPERCBEN
+let recoveryInterval = null;
+let lastActiveRedraw = 0;
+let taskRecoveryCounter = 0;
+
+function startRecoveryInterval() {
+  if (recoveryInterval) return;
+  recoveryInterval = setInterval(() => {
+    if (currentTask) {
+      const now = Date.now();
+      taskRecoveryCounter++;
+      if (now - lastActiveRedraw > 800) {
+        lastActiveRedraw = now;
+        console.log(`[RECOVERY] Periodikus recovery #${taskRecoveryCounter}`);
+        forceRedraw();
+        // Scroll trükk
+        const content = document.querySelector('.content');
+        if (content) {
+          const scrollTop = content.scrollTop;
+          content.scrollTop = scrollTop + 1;
+          requestAnimationFrame(() => { content.scrollTop = scrollTop; });
+        }
+      }
+      displayRecoveryPending = false;
+    } else {
+      taskRecoveryCounter = 0;
+    }
+  }, 1000);
+}
+startRecoveryInterval();
+
 /* ========== PYWEBVIEW BRIDGE ========== */
 function api() { return window.pywebview ? window.pywebview.api : null; }
 
