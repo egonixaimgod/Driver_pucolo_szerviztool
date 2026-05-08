@@ -14,7 +14,7 @@ import winreg
 import queue
 from datetime import datetime
 
-BUILD_NUMBER = 90
+BUILD_NUMBER = 91
 
 try:
     import webview
@@ -1327,7 +1327,7 @@ try {
             return {'status': 'Ismeretlen', 'color': 'unknown'}
 
     def _create_restore_point_sync(self, task_id='autofix'):
-        desc = "DriverDoktor AutoFix - " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        desc = "DriverDoktor AutoFix - " + datetime.now().strftime("%Y-%m-%d %H:%M")
         self.emit('task_progress', {'task': task_id, 'log': 'Registry Mentés (Restore Point) készítése folyamatban...', 'indeterminate': True})
         self._run(["powershell", "-NoProfile", "-Command", 'Enable-ComputerRestore -Drive "$($env:SystemDrive)\\" -ErrorAction SilentlyContinue'])
         self._run(['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore', '/v', 'SystemRestorePointCreationFrequency', '/t', 'REG_DWORD', '/d', '0', '/f'])
