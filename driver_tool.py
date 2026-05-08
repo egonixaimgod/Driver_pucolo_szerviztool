@@ -14,7 +14,7 @@ import winreg
 import queue
 from datetime import datetime
 
-BUILD_NUMBER = 93
+BUILD_NUMBER = 94
 
 try:
     import webview
@@ -848,15 +848,24 @@ class DriverToolApi:
 
                 logging.info(f"PnP szürés: {len(devices_to_check)} eszköz átment")
                 total_devs = len(devices_to_check)
+                # WU COM API search
                 self.emit('hw_scan_progress', {'status': f'✅ {total_devs} eszköz azonosítva, WU keresés indul...',
                                                'sys_info': f'{sys_info_text} | ⏳ Driver keresés...'})
 
-                # WU COM API search
+                # Ideiglenes WU engedélyezés a hardver szkennelés erejéig
+                self._run(['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching', '/v', 'SearchOrderConfig', '/t', 'REG_DWORD', '/d', '1', '/f'])
+                self._run(['reg', 'delete', r'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', '/v', 'ExcludeWUDriversInQualityUpdate', '/f'])
+
                 self.hw_updates_pool = []
                 self._hw_installed_devs = []
                 self.wu_api_mode = True
                 wu_results = self._search_wu_api()
                 wu_api_success = wu_results is not None
+
+                # Végső WU letiltás, ha így akarjuk az offline módot szimulálni, 
+                # de biztonságosabb, ha ezt a _disable_wu_sync hívással csináljuk csak (most visszazárjuk).
+                self._run(['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching', '/v', 'SearchOrderConfig', '/t', 'REG_DWORD', '/d', '0', '/f'])
+
                 if wu_results is None:
                     wu_results = []
 
