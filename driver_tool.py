@@ -14,7 +14,7 @@ import winreg
 import queue
 from datetime import datetime
 
-BUILD_NUMBER = 92
+BUILD_NUMBER = 93
 
 try:
     import webview
@@ -1463,17 +1463,21 @@ try {
                 self._create_restore_point_sync()
                 if self._cancel_flag: raise Exception("Magyar_Megszakit_Flag")
 
-                # 2. WU Letiltása
-                self._disable_wu_sync()
-                if self._cancel_flag: raise Exception("Magyar_Megszakit_Flag")
-
-                # 3. Third party driverek törlése
+                # 2. Third party driverek törlése
                 self._delete_third_party_sync()
                 if self._cancel_flag: raise Exception("Magyar_Megszakit_Flag")
+
+                # 3. Átmenetileg engedélyezzük a WU-t a driverkereséshez
+                self.emit('task_progress', {'task': 'autofix', 'log': 'Windows Update ideiglenes engedélyezése a szükséges driverek lekéréséhez...', 'indeterminate': True})
+                self._run(['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching', '/v', 'SearchOrderConfig', '/t', 'REG_DWORD', '/d', '1', '/f'])
+                self._run(['reg', 'delete', r'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', '/v', 'ExcludeWUDriversInQualityUpdate', '/f'])
 
                 # 4. Keresés és visszaépítés
                 self._scan_and_install_wu_sync()
                 
+                # 5. Végső WU letiltás, ahogy a user / program kérte eredetileg
+                self._disable_wu_sync()
+
                 self.emit('task_progress', {'task': 'autofix', 'log': '\n🎉 MINDEN LÉPÉS KÉSZ!'})
                 
                 try:
