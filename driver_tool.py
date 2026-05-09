@@ -14,7 +14,7 @@ import winreg
 import queue
 from datetime import datetime
 
-BUILD_NUMBER = 102
+BUILD_NUMBER = 103
 
 try:
     import webview
@@ -1400,6 +1400,11 @@ try {
     def _scan_and_install_wu_sync(self, task_id='autofix'):
         max_loops = 4
         total_installed_in_session = 0
+        
+        ignored_classes = ['Volume', 'VolumeSnapshot', 'DiskDrive', 'CDROM', 'Monitor', 'Battery',
+                           'SoftwareDevice', 'SoftwareComponent', 'Processor', 'Computer',
+                           'LegacyDriver', 'Endpoint', 'AudioEndpoint', 'PrintQueue', 'Printer', 'WPD']
+                           
         for loop_idx in range(1, max_loops + 1):
             if getattr(self, '_cancel_flag', False):
                 break
@@ -1407,100 +1412,127 @@ try {
             self.emit('task_progress', {'task': task_id, 'log': 'Új eszközök szkennelése PnP Util-lal...', 'indeterminate': True})
             self._run(['pnputil', '/scan-devices'])
             time.sleep(3)
-            self.emit('task_progress', {'task': task_id, 'log': 'Hivatalos driverek keresése és telepítése (Windows Update). Ez percekig is eltarthat...'})
-            ps_script = r"""
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-try {
-    $PresentHWIDs = @()
-    Get-WmiObject Win32_PnPEntity | Where-Object { $_.Present -eq $true } | ForEach-Object {
-        if ($_.HardwareID) { foreach ($hid in $_.HardwareID) { $PresentHWIDs += $hid.ToUpper() } }
-        if ($_.PNPDeviceID) { $PresentHWIDs += $_.PNPDeviceID.ToUpper() }
-    }
-
-    $Session = New-Object -ComObject Microsoft.Update.Session
-    $Searcher = $Session.CreateUpdateSearcher()
-    try { $SM = New-Object -ComObject Microsoft.Update.ServiceManager; $SM.AddService2("7971f918-a847-4430-9279-4a52d1efe18d", 7, "") | Out-Null } catch {}
-    $Searcher.ServerSelection = 3
-    $Searcher.ServiceID = "7971f918-a847-4430-9279-4a52d1efe18d"
-    
-    Write-Output "--- KERESÉS ---"
-    $Result = $Searcher.Search("IsInstalled=0 and Type='Driver'")
-    
-    $ToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
-    foreach ($U in $Result.Updates) {
-        $matchFound = $false
-        foreach ($hwid in $U.DriverHardwareID) {
-            $hUpper = $hwid.ToUpper()
-            foreach ($target in $PresentHWIDs) {
-                if ($hUpper.Contains($target) -or $target.Contains($hUpper)) { $matchFound = $true; break }
-            }
-            if ($matchFound) { break }
-        }
-        if ($matchFound) {
-            if (-not $U.EulaAccepted) { $U.AcceptEula() }
-            $ToInstall.Add($U) | Out-Null
-        } else {
-            Write-Output "❌ GHOST ESZKÖZ KIHAGYVA: $($U.Title)"
-        }
-    }
-
-    if ($ToInstall.Count -eq 0) { Write-Output "✅ Szerveren nincs újabb valós illesztőprogram ehhez a géphez."; exit }
-    
-    $Count = $ToInstall.Count
-    Write-Output "✅ Telepítendő driverek száma: $Count"
-    
-    Write-Output "--- LETÖLTÉS ---"
-    $Downloader = $Session.CreateUpdateDownloader()
-    $Downloader.Updates = $ToInstall
-    $Downloader.Download() | Out-Null
-    
-    Write-Output "--- TELEPÍTÉS ---"
-    $Installer = $Session.CreateUpdateInstaller()
-    
-    $s = 0; $f = 0
-    for ($i = 0; $i -lt $Count; $i++) {
-        $U = $ToInstall.Item($i)
-        $Title = $U.Title
-        Write-Output "▶ Telepítés alatt: $Title"
-        
-        $SingleUpdateColl = New-Object -ComObject Microsoft.Update.UpdateColl
-        $SingleUpdateColl.Add($U) | Out-Null
-        
-        $Installer.Updates = $SingleUpdateColl
-        try { 
-            $IR = $Installer.Install()
-            $RC = $IR.ResultCode 
-            if ($RC -eq 2 -or $RC -eq 3) {
-                Write-Output "  ✅ SIKERES: $Title"
-                $s++
-            } else {
-                Write-Output "  ⚠️ SIKERTELEN: $Title"
-                $f++
-            }
-        } catch {
-            Write-Output "  ⚠️ Hiba történt: $Title"
-            $f++
-        }
-    }
-    Write-Output "--- RENDES ÖSSZEGZÉS ---"
-    Write-Output "Összesen telepítve: $s sikeres, $f hibás."
-} catch { Write-Output "⚠️ Nem sikerült a WU szinkronizálása $_" }
-"""
-            res_wu = self._run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script], encoding='utf-8')
+            self.emit('task_progress', {'task': task_id, 'log': 'Hivatalos driverek keresése és egyeztetése (Windows Update). Ez percekig is eltarthat...'})
             
-            found_any = False
-            for line in res_wu.stdout.splitlines():
+            # PnP Query and exactly the same match logic as manual scan
+            cmd_pnp = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject Win32_PnPEntity | Where-Object { $_.Present -eq $true -and $_.ConfigManagerErrorCode -ne 45 } | Select-Object Name, PNPClass, PNPDeviceID | ConvertTo-Json -Compress"
+            res = self._run(["powershell", "-NoProfile", "-Command", cmd_pnp], encoding='utf-8')
+            pnp_data = []
+            if res.stdout:
+                try: 
+                    pnp_data = json.loads(res.stdout)
+                except: 
+                    pass
+                if not isinstance(pnp_data, list): 
+                    pnp_data = [pnp_data] if pnp_data else []
+            
+            seen_hwids = set()
+            devices_to_check = []
+            for d in pnp_data:
+                n = d.get("Name") or "Ismeretlen Eszköz"
+                pid = d.get("PNPDeviceID") or ""
+                pclass = d.get("PNPClass") or ""
+                if not pid: continue
+                if "virtual" in n.lower() or "pseudo" in n.lower() or "vmware" in n.lower(): continue
+                if pid.upper().startswith("ROOT\\"): continue
+                if pclass in ignored_classes: continue
+                
+                hwid_clean = self._extract_hwid(pid)
+                if not hwid_clean: continue
+                if hwid_clean in seen_hwids: continue
+                seen_hwids.add(hwid_clean)
+                devices_to_check.append({"name": n, "id": hwid_clean, "pnp_id": pid})
+                
+            self.emit('task_progress', {'task': task_id, 'log': f'✅ {len(devices_to_check)} hardverelem azonosítva. Egyeztetés...'})
+            wu_results = self._search_wu_api() or []
+            
+            matched_updates = []
+            matched_titles = []
+            for wu in wu_results:
+                hwids = wu.get('HardwareID') or []
+                if isinstance(hwids, str): hwids = [hwids]
+                hwids_upper = [str(h).upper() for h in hwids]
+                
+                match_found = False
+                # Hardver ID teszt
+                for hUpper in hwids_upper:
+                    if not hUpper: continue
+                    for pd in devices_to_check:
+                        tUpper = pd['id'].upper()
+                        tPnp = pd['pnp_id'].upper()
+                        if tUpper in hUpper or hUpper in tUpper or tPnp in hUpper or hUpper in tPnp:
+                            match_found = True
+                            break
+                    if match_found: break
+                
+                # Title teszt (Realtek/Gigabyte/stb.)
+                if not match_found:
+                    w_title = wu.get('Title', '').lower()
+                    for pd in devices_to_check:
+                        n_lower = pd['name'].lower()
+                        if n_lower != "ismeretlen eszköz" and len(n_lower) > 3 and (n_lower in w_title or w_title in n_lower):
+                            match_found = True
+                            break
+                            
+                if match_found:
+                    matched_updates.append(wu.get('UpdateID'))
+                    matched_titles.append(wu.get('Title'))
+
+            if not matched_updates:
+                self.emit('task_progress', {'task': task_id, 'log': '✅ Szerveren nincs újabb valós illesztőprogram.'})
+                self.emit('task_progress', {'task': task_id, 'log': 'Minden elérhető driver telepítve! Keresési lánc befejezve.'})
+                break
+                
+            self.emit('task_progress', {'task': task_id, 'log': f'✅ Telepítendő driverek száma: {len(matched_updates)}'})
+            ids_str = ",".join([f"'{uid}'" for uid in matched_updates])
+            
+            install_ps = f"""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$targetIDs = @({ids_str})
+$Session = New-Object -ComObject Microsoft.Update.Session
+$Searcher = $Session.CreateUpdateSearcher()
+$Searcher.ServerSelection = 3
+$Searcher.ServiceID = "7971f918-a847-4430-9279-4a52d1efe18d"
+$Result = $Searcher.Search("IsInstalled=0 and Type='Driver'")
+
+$ToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
+foreach ($U in $Result.Updates) {{
+    if ($targetIDs -contains $U.Identity.UpdateID) {{
+        if (-not $U.EulaAccepted) {{ $U.AcceptEula() }}
+        $ToInstall.Add($U) | Out-Null
+    }}
+}}
+
+if ($ToInstall.Count -eq 0) {{ Write-Output "Hibás WU egyeztetés."; exit }}
+
+Write-Output "--- LETÖLTÉS ÉS TELEPÍTÉS ---"
+$Downloader = $Session.CreateUpdateDownloader()
+$Downloader.Updates = $ToInstall
+$Downloader.Download() | Out-Null
+
+$Installer = $Session.CreateUpdateInstaller()
+for ($i = 0; $i -lt $ToInstall.Count; $i++) {{
+    $U = $ToInstall.Item($i)
+    Write-Output "▶ Telepítés alatt: $($U.Title)"
+    $SC = New-Object -ComObject Microsoft.Update.UpdateColl
+    $SC.Add($U) | Out-Null
+    $Installer.Updates = $SC
+    try {{
+        $IR = $Installer.Install()
+        $RC = $IR.ResultCode
+        if ($RC -eq 2 -or $RC -eq 3) {{ Write-Output "  ✅ SIKERES: $($U.Title)" }}
+        else {{ Write-Output "  ⚠️ SIKERTELEN: $($U.Title)" }}
+    }} catch {{ Write-Output "  ⚠️ HIBA: $($U.Title)" }}
+}}
+"""
+            res_install = self._run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", install_ps], encoding='utf-8')
+            for line in res_install.stdout.splitlines():
                 if line.strip():
                     clean_msg = line.strip().replace('✅', '[OK]').replace('⚠️', '[FIGYELMEZTETES]').replace('❌', '[HIBA]').replace('▶', '[TELEPITES]')
                     self.emit('task_progress', {'task': task_id, 'log': clean_msg})
-                    if "TELEPITES" in clean_msg or "Telepítendő driverek száma" in line:
-                        found_any = True
                     if "[OK] SIKERES:" in clean_msg:
                         total_installed_in_session += 1
                         
-            if not found_any or "Szerveren nincs újabb valós illesztőprogram" in res_wu.stdout:
-                self.emit('task_progress', {'task': task_id, 'log': 'Minden elérhető driver telepítve! Keresési lánc befejezve.'})
-                break
         return total_installed_in_session
 
     def run_autofix(self):

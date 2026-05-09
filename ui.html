@@ -453,7 +453,7 @@ window.addEventListener('pywebviewready', async () => {
     
     if (data.resume_mode) {
       setTimeout(() => {
-        startAutofix();
+        startAutoFix(true);
       }, 1000);
     }
   } catch(e) { console.error('init error', e); }
@@ -792,8 +792,11 @@ function updateWuStatus(data) {
   el.textContent = 'Állapot: ' + (data.status || 'Ismeretlen');
   el.className = 'wu-status ' + (data.color || 'unknown');
 }
-async function startAutoFix() {
-  const ok = await showConfirm('1 Kattintásos Driver Fix', 'Megerősíted a teljes automatikus javítás (visszaállítási pont, driver törlés és újratelepítés) indítását?');
+async function startAutoFix(skipConfirm = false) {
+  let ok = skipConfirm;
+  if (!ok) {
+    ok = await showConfirm('1 Kattintásos Driver Fix', 'Megerősíted a teljes automatikus javítás (visszaállítási pont, driver törlés és újratelepítés) indítását?');
+  }
   if (ok) {
     document.getElementById('btn-autofix').disabled = true;
     document.getElementById('btn-autofix').textContent = '⏳ FOLYAMATBAN...';
