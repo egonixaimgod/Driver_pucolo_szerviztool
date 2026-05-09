@@ -14,7 +14,7 @@ import winreg
 import queue
 from datetime import datetime
 
-BUILD_NUMBER = 97
+BUILD_NUMBER = 98
 
 try:
     import webview
@@ -804,7 +804,7 @@ class DriverToolApi:
 
                 pnp_data = []
                 try:
-                    cmd_pnp = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject Win32_PnPEntity | Where-Object { $_.Present -eq $true } | Select-Object Name, PNPClass, PNPDeviceID | ConvertTo-Json -Compress"
+                    cmd_pnp = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-WmiObject Win32_PnPEntity | Where-Object { $_.Present -eq $true -and $_.ConfigManagerErrorCode -ne 45 } | Select-Object Name, PNPClass, PNPDeviceID | ConvertTo-Json -Compress"
                     res = self._run(["powershell", "-NoProfile", "-Command", cmd_pnp], encoding='utf-8')
                     if res.stdout:
                         out = json.loads(res.stdout)
@@ -812,7 +812,7 @@ class DriverToolApi:
                 except Exception as ex:
                     logging.error(f"PNP Query error: {ex}")
 
-                self.emit('hw_scan_progress', {'status': f'📋 {len(pnp_data)} PnP eszköz szűrése...'})
+                self.emit('hw_scan_progress', {'status': '📋 PnP eszközök szűrése...'})
 
                 seen_hwids = set()
                 devices_to_check = []
@@ -849,7 +849,7 @@ class DriverToolApi:
                 logging.info(f"PnP szürés: {len(devices_to_check)} eszköz átment")
                 total_devs = len(devices_to_check)
                 # WU COM API search
-                self.emit('hw_scan_progress', {'status': f'✅ {total_devs} eszköz azonosítva, WU keresés indul...',
+                self.emit('hw_scan_progress', {'status': '✅ Hardverelemek azonosítva, WU keresés indul...',
                                                'sys_info': f'{sys_info_text} | ⏳ Driver keresés...'})
 
                 # Ideiglenes WU engedélyezés a hardver szkennelés erejéig
